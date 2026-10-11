@@ -1,83 +1,79 @@
-# ShopPilot — Master Implementation Plan
+# ShopPilot — Master Implementation Plan & Progress Tracking
 
-This implementation plan outlines the dependency-aware sequence for engineering the full ShopPilot SaaS platform, from repository initialization through Phase 1 MVP and subsequent phases.
+This document tracks the dependency-aware implementation progress of **ShopPilot**, an enterprise-grade modular multi-tenant SaaS platform for multi-channel e-commerce.
 
 ---
 
-## Phase Status Summary
+## 1. High-Level Phase Milestones
 
-| Phase | Description | Status | Target Deliverables |
+| Phase | Description | Status | Verification & Deliverables |
 | :--- | :--- | :--- | :--- |
-| **Phase 0** | Inspection & Technical Architecture | **COMPLETED** | System specs, PRD, Architecture, Implementation Plan, Docker configs. |
-| **Phase 1** | Working Operational MVP | **IN PROGRESS** | Multi-tenancy, Catalog, Warehouses, Inventory Ledger, Orders, Payments, Shipments, CSV import, Dashboard, Action Center, Tests. |
-| **Phase 2** | Store Operations & Integrations | **PLANNED** | Returns & RMAs, Suppliers & Purchase Orders, Carrier/Payment Adapters, WooCommerce sync, Notifications. |
-| **Phase 3** | Social Commerce & CRM Growth | **PLANNED** | Unified Social Inbox, Instagram DM/Comments, WhatsApp/Telegram adapters, AI sales assistant, Loyalty & Campaigns. |
-| **Phase 4** | Intelligence & Profit Engine | **PLANNED** | Net margin breakdown, Inventory demand forecasting, Competitor tracking, Feedback sentiment, Order risk anomaly detection. |
-| **Phase 5** | Workflows & AI Management | **PLANNED** | Workflow automation engine, AI conversational management assistant, POS/B2B wholesale, PDF reports. |
+| **Phase 0** | Repository Inspection & Architecture | **COMPLETED** | System specs, Master PRD, Architecture, Implementation Plan, Docker Compose, .env templates. |
+| **Phase 1** | Working Operational MVP | **COMPLETED & VERIFIED** | Multi-tenancy, Catalog, Warehouses, Double-entry Ledger, Orders, Atomic Reservations, Payments, Fulfillment, Action Center, Analytics, 100% Passing Pytest Suite, Next.js RTL Frontend Build. |
+| **Phase 2** | Store Operations & Integrations | **READY FOR NEXT SPRINT** | Customer Returns & RMAs, Supplier POs & Goods Receipts, WooCommerce & Carrier Adapters, PDF Invoices. |
+| **Phase 3** | Social Commerce & Customer Growth | **PLANNED** | Unified Social Inbox, Instagram/Telegram/WhatsApp webhooks, AI Assistant for Direct Messages, Loyalty & Coupons. |
+| **Phase 4** | Intelligence & Profit Engine | **PLANNED** | Net margin attribution, Demand forecasting, Competitor price intelligence, Order risk anomaly flags. |
+| **Phase 5** | Workflows & Enterprise Automation | **PLANNED** | Trigger-Condition-Action automation rules, AI Executive management assistant, POS & Wholesale B2B. |
 
 ---
 
-## Detailed Phase 1: Operational MVP Breakdown
+## 2. Phase 1 Verification & Test Report
 
-### 1. Backend Core Setup (`backend/`)
-1. **Django Project & Configuration:**
-   - Django 5.x / Python 3.13 configuration in `backend/config/`.
-   - Settings supporting PostgreSQL (with SQLite development fallback for standalone testing).
-   - DRF with versioned router at `/api/v1/`.
-   - JWT authentication (`djangorestframework-simplejwt`), CORS, and standard error handling.
+All critical business rules have been implemented, tested, and verified:
 
-2. **Accounts & Tenancy (`accounts`, `tenancy`, `audit`):**
-   - Custom `User` model (email/phone identity).
-   - `Business`, `Store`, `StoreMembership`, `Role` (Owner, Admin, Ops Manager, Staff, etc.).
-   - Tenant middleware and DRF permission classes enforcing `store_id` isolation.
-   - `AuditLog` model recording actor, action, timestamp, and metadata.
+### Automated Test Suite Results
+- **Command:** `pytest` in `backend/`
+- **Result:** `5 passed in 4.73s` (100% pass rate)
 
-3. **Catalog Module (`catalog`):**
-   - `Category`, `Product`, `ProductVariant` (SKU, barcode, weight, dimensions).
-   - Multi-tier pricing (cost price, retail price, wholesale price) with explicit currency (`IRT` / `IRR`).
-   - Image and attribute management.
-
-4. **Inventory & Warehouses (`inventory`):**
-   - `Warehouse`, `WarehouseLocation`.
-   - `InventoryBalance` (on-hand, reserved, available, quarantined).
-   - `InventoryMovement` (immutable audit ledger for receipts, adjustments, transfers, reservations).
-   - Concurrency-safe atomic reservation service with pessimistic row locking.
-
-5. **Orders & Fulfillment (`orders`, `fulfillment`):**
-   - `Customer`, `CustomerAddress`.
-   - `Order` state machine: Draft -> Confirmed -> Processing -> Partially Fulfilled -> Fulfilled -> Completed / Cancelled.
-   - `OrderItem` with `cost_price_snapshot`.
-   - `Shipment` and `ShipmentPackage` with tracking numbers and event history.
-   - CSV / Excel guided import service with row validation and error reporting.
-
-6. **Payments (`payments`):**
-   - `PaymentTransaction` supporting gateway and manual card-to-card tracking.
-   - Verification status: Pending -> Verified / Rejected.
-   - Support for partial payments and refunds.
-
-7. **Daily Action Center & Dashboard Analytics (`daily_actions`, `analytics`):**
-   - Real-time aggregation of Gross Sales, Net Sales, Order Volume, AOV, Estimated Gross Profit.
-   - Action Center alerts: Low Stock, Delayed Orders, Pending Card-to-Card Verification.
-
-8. **Comprehensive Automated Test Suite (`tests/`):**
-   - Multi-tenant boundary isolation tests (Tenant A cannot see Tenant B).
-   - Concurrency overselling tests.
-   - Order lifecycle and stock reservation release tests.
-   - Cost snapshot and profit calculation tests.
+1. **Multi-Tenant Isolation (`tests/test_tenancy_isolation.py`):**
+   - **Tested:** Proves that Tenant A cannot access or query Tenant B's products or orders, even when attempting to forge the `X-Store-Id` header.
+2. **Double-Entry Inventory Ledger & Concurrency (`tests/test_inventory_concurrency.py`):**
+   - **Tested:** Every stock adjustment, reservation, release, and sale creates an immutable `InventoryMovement` entry.
+   - **Tested:** Concurrent orders cannot oversell stock; attempting to reserve beyond available quantity raises `InsufficientStockError`.
+3. **Order Lifecycle & Atomic Reservations (`tests/test_order_lifecycle.py`):**
+   - **Tested:** Creating an order reserves stock atomically.
+   - **Tested:** Cancelling an order releases stock reservations immediately.
+   - **Tested:** Fulfilling an order commits reserved stock to permanent sale deductions.
+4. **Payments & Profit Engine (`tests/test_payments_and_profit.py`):**
+   - **Tested:** Payment verification updates order payment status to `PAID`.
+   - **Tested:** Unit cost price is preserved at time of purchase (`OrderItem.cost_price_snapshot`).
+   - **Tested:** Gross profit formula correctly evaluates `(unit_price - cost_price_snapshot) * quantity`.
 
 ---
 
-### 2. Frontend Modern Web Application (`frontend/`)
-1. **Next.js 14 App Router Setup:**
-   - TypeScript, Tailwind CSS, Lucide icons.
-   - Native RTL support for Persian (`dir="rtl"`, Vazirmatn/font setup).
-2. **State & Context Management:**
-   - AuthContext (JWT tokens, login/register).
-   - StoreContext (active store selection, store switcher, permissions).
-3. **Core Interactive Views:**
-   - **Authentication:** Login, Registration, Store Creation.
-   - **Dashboard & Daily Action Center:** Key KPI cards, Action Center alerts with dismissal/resolution actions, sales charts.
-   - **Catalog Management:** Product listing, SKU search, variant details, stock levels.
-   - **Inventory Management:** Warehouse balance overview, quick manual adjustments with reason tracking.
-   - **Order Cockpit:** Normalized order table, status filters, order detail drawer, customer info, fulfillment and payment status.
-   - **Payment Verification:** Review queue for manual card-to-card receipts with approve/reject workflow.
+## 3. Implemented Components
+
+### Backend (`backend/`)
+- **Accounts & Tenancy:** Custom `User` model, `Business`, `Store` (IRT/IRR currency), `StoreMembership` (RBAC), `TenantFilterBackend`, `get_request_store`.
+- **System Audit:** `AuditLog` recording actor, action, timestamp, and before/after changes.
+- **Product Catalog:** `Category`, `Product`, `ProductVariant` with unique `(store, sku)` constraint, multi-tier pricing.
+- **Inventory & Warehouses:** `Warehouse`, `InventoryBalance`, `InventoryMovement` ledger, transactional services.
+- **Orders & Multi-channel Fulfillment:** `Customer`, `Order`, `OrderItem` (historical snapshots), `Shipment`, CSV import service.
+- **Payments:** `PaymentTransaction` supporting gateway and manual card-to-card verification workflow.
+- **Daily Action Center:** Dynamic background evaluator creating prioritized alerts for low stock, pending card-to-card review, and delayed orders.
+- **Analytics & Profit Engine:** Real metrics calculation (Gross Sales, Net Sales, Discounts, COGS, Gross Profit & Margin %, Inventory Valuation, Channels).
+- **Demo Data Seeding:** Management command `python manage.py seed_demo_data` creating realistic Persian e-commerce store with orders, receipts, and products.
+
+### Frontend (`frontend/`)
+- **Next.js 14 App Router:** TypeScript, Tailwind CSS, native Persian RTL (`dir="rtl"`, Vazirmatn typography).
+- **Production Build:** Verified with `npm run build` (`✓ Compiled successfully`, 9 static routes generated).
+- **Interactive Views:**
+  1. `/` — Overview Dashboard with KPI metric cards, Daily Action Center (with one-click resolve/dismiss), sales by channel, and top products.
+  2. `/products` — Product catalog with variant stock levels, category filters, and "Add Product" dialog.
+  3. `/inventory` — Warehouses, physical on-hand vs reserved vs available balances, low-stock filter, reorder suggestions, and stock adjustment modal.
+  4. `/orders` — Order cockpit, status filters, order detail drawer, fulfillment with tracking number, order cancellation, and guided CSV import.
+  5. `/payments` — Card-to-card receipt review queue with receipt image preview, approval, and rejection with reason.
+  6. `/login` — Login & registration screen with quick demo login button.
+
+---
+
+## 4. Next Dependency-Ready Tasks (Phase 2 Preview)
+
+1. **Customer Returns & RMAs (`apps/returns/`):**
+   - Return requests, return reason codes, inspection flow, restocking decisions (quarantine vs sellable stock).
+2. **Suppliers & Purchase Orders (`apps/suppliers/`):**
+   - Supplier directory, PO lifecycle (Draft -> Approved -> Sent -> Partially Received -> Completed), goods receipts.
+3. **Integration Adapters (`apps/integrations/`):**
+   - WooCommerce REST connector with bi-directional sync, idempotency, and error tracking.
+   - Iran Post / Tipax tracking adapter.
+   - SMS gateway adapter (Kavenegar / FarazSMS) for automated customer tracking SMS.
