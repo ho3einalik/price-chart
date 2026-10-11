@@ -11,6 +11,7 @@ from apps.tenancy.permissions import (
     get_request_store,
     user_has_store_permission
 )
+from apps.features.permissions import RequiresFeature
 from .models import (
     SocialAccount,
     SocialCampaign,
@@ -59,7 +60,7 @@ class SocialCampaignViewSet(viewsets.ModelViewSet):
 
 
 class SocialContentViewSet(viewsets.ModelViewSet):
-    permission_classes = [permissions.IsAuthenticated, IsStoreMemberPermission]
+    permission_classes = [permissions.IsAuthenticated, IsStoreMemberPermission, RequiresFeature('social.content_calendar')]
     filter_backends = [TenantFilterBackend]
     queryset = SocialContent.objects.select_related(
         'store', 'account', 'campaign', 'creator', 'assignee', 'related_product'
@@ -205,7 +206,7 @@ class SocialContentViewSet(viewsets.ModelViewSet):
 
 
 class SocialAnalyticsView(APIView):
-    permission_classes = [permissions.IsAuthenticated, IsStoreMemberPermission]
+    permission_classes = [permissions.IsAuthenticated, IsStoreMemberPermission, RequiresFeature('social.analytics')]
 
     def get(self, request):
         store = get_request_store(request)

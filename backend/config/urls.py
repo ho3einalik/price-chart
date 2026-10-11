@@ -22,4 +22,5 @@ urlpatterns = [
     path('api/v1/analytics/', include('apps.analytics.urls')),
     path('api/v1/tasks/', include('apps.tasks.urls')),
     path('api/v1/social/', include('apps.social.urls')),
+    path('api/v1/features/', include('apps.features.urls')),
 ]

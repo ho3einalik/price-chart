@@ -13,7 +13,8 @@ import {
   CheckSquare,
   Calendar,
   Layers,
-  BarChart3
+  BarChart3,
+  SlidersHorizontal
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -34,6 +35,10 @@ const socialNavItems = [
   { href: '/social/calendar', label: 'تقویم محتوا و انتشار', icon: Calendar },
   { href: '/social/content', label: 'کارتابل و تأیید محتوا', icon: Layers },
   { href: '/social/analytics', label: 'آنالیز شبکه‌های اجتماعی', icon: BarChart3 },
+];
+
+const settingsNavItems = [
+  { href: '/settings/features', label: 'ماژول‌ها و طرح اشتراک', icon: SlidersHorizontal },
 ];
 
 export function Sidebar() {
@@ -102,6 +107,33 @@ export function Sidebar() {
           </div>
           <nav className="space-y-1">
             {socialNavItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = pathname === item.href;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={cn(
+                    'flex items-center gap-3 px-3 py-2 rounded-xl font-medium text-xs transition-all',
+                    isActive
+                      ? 'bg-sky-600 text-white shadow-sm shadow-sky-900/50'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                  )}
+                >
+                  <Icon className={cn('w-4 h-4 shrink-0', isActive ? 'text-white' : 'text-slate-400')} />
+                  <span>{item.label}</span>
+                </Link>
+              );
+            })}
+          </nav>
+        </div>
+
+        <div>
+          <div className="px-3 mb-2 text-xs font-semibold text-slate-400 uppercase tracking-wider">
+            تنظیمات و پلتفرم
+          </div>
+          <nav className="space-y-1">
+            {settingsNavItems.map((item) => {
               const Icon = item.icon;
               const isActive = pathname === item.href;
               return (

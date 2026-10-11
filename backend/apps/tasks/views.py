@@ -11,6 +11,7 @@ from apps.tenancy.permissions import (
     get_request_store,
     user_has_store_permission
 )
+from apps.features.permissions import RequiresFeature
 from .models import (
     TaskCategory,
     Task,
@@ -34,7 +35,7 @@ from .services import TaskService
 
 class TaskCategoryViewSet(viewsets.ModelViewSet):
     serializer_class = TaskCategorySerializer
-    permission_classes = [permissions.IsAuthenticated, IsStoreMemberPermission]
+    permission_classes = [permissions.IsAuthenticated, IsStoreMemberPermission, RequiresFeature('tasks.planner')]
     filter_backends = [TenantFilterBackend]
     queryset = TaskCategory.objects.all()
 
@@ -44,7 +45,7 @@ class TaskCategoryViewSet(viewsets.ModelViewSet):
 
 
 class TaskViewSet(viewsets.ModelViewSet):
-    permission_classes = [permissions.IsAuthenticated, IsStoreMemberPermission]
+    permission_classes = [permissions.IsAuthenticated, IsStoreMemberPermission, RequiresFeature('tasks.planner')]
     filter_backends = [TenantFilterBackend]
     queryset = Task.objects.select_related(
         'store', 'category', 'creator', 'assignee', 'reviewer', 'related_product', 'related_order'
