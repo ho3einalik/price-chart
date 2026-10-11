@@ -34,6 +34,8 @@ INSTALLED_APPS = [
     'apps.fulfillment',
     'apps.daily_actions',
     'apps.analytics',
+    'apps.tasks',
+    'apps.social',
 ]
 
 MIDDLEWARE = [

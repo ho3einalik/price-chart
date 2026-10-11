@@ -222,7 +222,244 @@ class Command(BaseCommand):
         )
         verify_payment_transaction(pay3, user)
 
-        # 7. Sync Daily Actions
+        # 7. Seed Team Members & Invitations
+        team_members_data = [
+            {'email': 'sara@shoppilot.io', 'full_name': 'سارا محمدی', 'role': Role.SOCIAL_MEDIA_MANAGER, 'phone': '09123334455'},
+            {'email': 'navid@shoppilot.io', 'full_name': 'نوید کمالی', 'role': Role.CONTENT_CREATOR, 'phone': '09124445566'},
+            {'email': 'maryam@shoppilot.io', 'full_name': 'مریم حسینی', 'role': Role.OPS_MANAGER, 'phone': '09125556677'},
+        ]
+        created_members = {}
+        for tm in team_members_data:
+            u, _ = User.objects.get_or_create(
+                email=tm['email'],
+                defaults={'full_name': tm['full_name'], 'phone_number': tm['phone']}
+            )
+            u.set_password('password123')
+            u.save()
+            StoreMembership.objects.get_or_create(
+                store=store,
+                user=u,
+                defaults={'role': tm['role'], 'status': 'ACTIVE', 'is_active': True}
+            )
+            created_members[tm['email']] = u
+
+        # Pending invitation
+        from apps.tenancy.models import TeamInvitation, InvitationStatus
+        from datetime import timedelta
+        TeamInvitation.objects.get_or_create(
+            store=store,
+            email='arash@shoppilot.io',
+            defaults={
+                'role': Role.SUPPORT,
+                'inviter': user,
+                'token': 'inv_demo_arash_12345',
+                'status': InvitationStatus.PENDING,
+                'expires_at': timezone.now() + timedelta(days=5)
+            }
+        )
+
+        # 8. Seed Tasks & Categories
+        from apps.tasks.models import TaskCategory, Task, TaskPriority, TaskStatus
+        from apps.tasks.services import TaskService
+
+        cat_content, _ = TaskCategory.objects.get_or_create(store=store, name="تولید محتوا و رسانه", defaults={'color': '#8B5CF6', 'icon': 'video'})
+        cat_ops, _ = TaskCategory.objects.get_or_create(store=store, name="عملیات و لجستیک", defaults={'color': '#10B981', 'icon': 'package'})
+        cat_sales, _ = TaskCategory.objects.get_or_create(store=store, name="فروش و امور مالی", defaults={'color': '#F59E0B', 'icon': 'dollar-sign'})
+
+        now = timezone.now()
+        today = now.date()
+
+        # Task 1: Shoot Reels for new manteau
+        p1 = Product.objects.filter(store=store).first()
+        TaskService.create_task(
+            store=store,
+            creator=user,
+            data={
+                'title': 'فیلمبرداری و ادیت ریلز مانتو کتی ژاکارد',
+                'description': 'ضبط ۳ سناریوی ترند اینستاگرام با مدل در آتلیه مرکزی، ادیت ریتمیک همراه با کال‌تواکشن خرید از دایرکت.',
+                'category': cat_content,
+                'priority': TaskPriority.HIGH,
+                'status': TaskStatus.IN_PROGRESS,
+                'assignee': created_members['navid@shoppilot.io'],
+                'reviewer': created_members['sara@shoppilot.io'],
+                'start_date': today - timedelta(days=1),
+                'due_date': today + timedelta(days=2),
+                'estimated_hours': Decimal('4.5'),
+                'actual_hours': Decimal('2.0'),
+                'requires_verification': True,
+                'related_product': p1
+            },
+            checklist_items=[
+                {'title': 'آماده‌سازی مانتو و اتوکشی نمونه عکاسی', 'is_completed': True},
+                {'title': 'فیلمبرداری پلان‌های کلوزآپ پارچه ژاکارد', 'is_completed': True},
+                {'title': 'تدوین و انتخاب موزیک ترند اینستاگرام', 'is_completed': False},
+                {'title': 'طراحی کاور جذاب با تیتر قلاب‌دار', 'is_completed': False},
+            ]
+        )
+
+        # Task 2: Inventory recount
+        TaskService.create_task(
+            store=store,
+            creator=user,
+            data={
+                'title': 'شمارش موجودی و بسته‌بندی سفارشات معوق انبار مرکزی',
+                'description': 'تطبیق فیزیکی قفسه کفش‌های چرم و آماده‌سازی ۳ مرسوله برای تحویل به پیک تیپاکس.',
+                'category': cat_ops,
+                'priority': TaskPriority.URGENT,
+                'status': TaskStatus.TODO,
+                'assignee': created_members['maryam@shoppilot.io'],
+                'reviewer': user,
+                'start_date': today,
+                'due_date': today + timedelta(days=1),
+                'estimated_hours': Decimal('3.0'),
+                'requires_verification': True
+            },
+            checklist_items=[
+                {'title': 'شمارش فیزیکی کفش چرم عسلی سایز ۳۸', 'is_completed': False},
+                {'title': 'چاپ لیبل‌های بارکد پستی سفارشات ۱۰۱ و ۱۰۳', 'is_completed': False},
+                {'title': 'تحویل به مامور تیپاکس و دریافت کد پیگیری', 'is_completed': False},
+            ]
+        )
+
+        # Task 3: Verify bank slips
+        TaskService.create_task(
+            store=store,
+            creator=user,
+            data={
+                'title': 'تأیید فیش‌های کارت به کارت کانال تلگرام',
+                'description': 'بررسی ۵ تراکنش بانکی با پیامک‌های گردش حساب سپه و ثبت تأیید در سامانه.',
+                'category': cat_sales,
+                'priority': TaskPriority.MEDIUM,
+                'status': TaskStatus.COMPLETED,
+                'assignee': user,
+                'due_date': today - timedelta(days=1),
+                'completed_at': now - timedelta(hours=3),
+                'completion_evidence': 'تمام فیش‌ها با پیامک بانک مطابقت داده شد.'
+            }
+        )
+
+        # 9. Seed Social Media Accounts, Campaigns & Content
+        from apps.social.models import (
+            SocialAccount, SocialPlatform, ConnectionMode,
+            SocialCampaign, SocialContent, ContentType, ContentStatus, PublishingMode
+        )
+        from apps.social.services import SocialService
+
+        acc_ig, _ = SocialAccount.objects.get_or_create(
+            store=store,
+            platform=SocialPlatform.INSTAGRAM,
+            handle='@lotus_boutique_fa',
+            defaults={
+                'display_name': 'مزون و فروشگاه پوشاک لوتوس',
+                'is_connected': True,
+                'connection_mode': ConnectionMode.MANUAL_TRACKING,
+                'follower_count': 24800,
+                'bio': 'طراحی و دوخت خاص بانوان 🌿 | ارسال فوری به سراسر کشور | ثبت سفارش از سایت و دایرکت'
+            }
+        )
+
+        acc_tg, _ = SocialAccount.objects.get_or_create(
+            store=store,
+            platform=SocialPlatform.TELEGRAM,
+            handle='@lotus_store_official',
+            defaults={
+                'display_name': 'کانال حراج و اطلاع‌رسانی لوتوس',
+                'is_connected': True,
+                'connection_mode': ConnectionMode.MANUAL_TRACKING,
+                'follower_count': 6400,
+                'bio': 'اطلاع‌رسانی تخفیف‌های ویژه و شارژ موجودی انبار'
+            }
+        )
+
+        camp_autumn, _ = SocialCampaign.objects.get_or_create(
+            store=store,
+            name='کمپین کالکشن پاییزه ۱۴۰۳',
+            defaults={
+                'objective': 'SALES',
+                'budget': Decimal('40000000'),
+                'status': 'ACTIVE',
+                'start_date': today - timedelta(days=7),
+                'end_date': today + timedelta(days=21),
+                'description': 'تمرکز بر مانتوهای کتی و بارانی‌های پاییزی با تخفیف افتتاحیه فصل'
+            }
+        )
+
+        # Content 1: Published Reel with high engagement
+        c_published, _ = SocialContent.objects.get_or_create(
+            store=store,
+            title='ریلز رونمایی استایل پاییزی با مانتو کتی ژاکارد',
+            defaults={
+                'account': acc_ig,
+                'campaign': camp_autumn,
+                'content_type': ContentType.REEL,
+                'caption': 'استایلی که این پاییز همه چشم‌ها رو به خودش خیره می‌کنه! ✨ مانتو کتی ژاکارد با بهترین متریال.\nکد محصول: MANTO-JK-01\nبرای سفارش به دایرکت یا لینک بایو سر بزنید.',
+                'hashtags': '#مانتو_کتی #استایل_پاییزه #مزون_تهران #پوشاک_زنانه',
+                'status': ContentStatus.PUBLISHED,
+                'creator': created_members['navid@shoppilot.io'],
+                'assignee': created_members['navid@shoppilot.io'],
+                'scheduled_at': now - timedelta(days=3),
+                'published_at': now - timedelta(days=3),
+                'published_url': 'https://instagram.com/p/DB98234Lotus',
+                'thumbnail_url': 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=600',
+                'related_product': p1
+            }
+        )
+
+        # Record metrics snapshot for published reel
+        SocialService.record_metrics(
+            content=c_published,
+            metrics_data={
+                'reach': 18400,
+                'impressions': 24500,
+                'likes': 1420,
+                'comments': 310,
+                'shares': 225,
+                'saves': 380,
+                'clicks': 490,
+                'attributed_orders_count': 18,
+                'attributed_revenue': Decimal('54800000')
+            }
+        )
+
+        # Content 2: Scheduled Story for today evening
+        SocialContent.objects.get_or_create(
+            store=store,
+            title='استوری یادآوری موجودی محدود کرم',
+            defaults={
+                'account': acc_ig,
+                'campaign': camp_autumn,
+                'content_type': ContentType.STORY,
+                'caption': 'فقط ۳ عدد از مانتو کتی ژاکارد رنگ کرم در انبار باقیمانده! ⏳ باکس سوالات سفارش سریع باز شد.',
+                'status': ContentStatus.SCHEDULED,
+                'creator': created_members['sara@shoppilot.io'],
+                'assignee': created_members['sara@shoppilot.io'],
+                'scheduled_at': now + timedelta(hours=4),
+                'thumbnail_url': 'https://images.unsplash.com/photo-1539109136881-3be0616acf4b?w=600',
+                'publishing_mode': PublishingMode.MANUAL_REMINDER,
+                'related_product': p1
+            }
+        )
+
+        # Content 3: In Review Carousel for weekend
+        c_review, _ = SocialContent.objects.get_or_create(
+            store=store,
+            title='پست اسلایدی نحوه ست کردن کیف چرم دوشی با پالتو',
+            defaults={
+                'account': acc_ig,
+                'campaign': camp_autumn,
+                'content_type': ContentType.CAROUSEL,
+                'caption': 'ورق بزنید! ۵ ایده جذاب ست کردن کیف چرم عسلی در مهمانی و محل کار 👜 کد تخفیف اختصاصی در اسلاید آخر.',
+                'hashtags': '#ست_کیف_کفش #کیف_چرم #استایل_شیک',
+                'status': ContentStatus.READY_FOR_REVIEW,
+                'creator': created_members['navid@shoppilot.io'],
+                'assignee': created_members['sara@shoppilot.io'],
+                'scheduled_at': now + timedelta(days=2),
+                'thumbnail_url': 'https://images.unsplash.com/photo-1548036328-c9fa89d128fa?w=600',
+                'publishing_mode': PublishingMode.MANUAL_REMINDER
+            }
+        )
+
+        # 10. Sync Daily Actions
         sync_daily_actions_for_store(store)
 
         self.stdout.write(self.style.SUCCESS(f"Successfully seeded demo store ID: {store.id}"))

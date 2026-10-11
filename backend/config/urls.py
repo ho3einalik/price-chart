@@ -20,4 +20,6 @@ urlpatterns = [
     path('api/v1/fulfillment/', include('apps.fulfillment.urls')),
     path('api/v1/daily-actions/', include('apps.daily_actions.urls')),
     path('api/v1/analytics/', include('apps.analytics.urls')),
+    path('api/v1/tasks/', include('apps.tasks.urls')),
+    path('api/v1/social/', include('apps.social.urls')),
 ]

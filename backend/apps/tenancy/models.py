@@ -5,11 +5,25 @@ from django.conf import settings
 class Role(models.TextChoices):
     OWNER = 'OWNER', 'مالک'
     ADMIN = 'ADMIN', 'مدیر سیستم'
-    OPS_MANAGER = 'OPS_MANAGER', 'مدیر عملیات'
+    BUSINESS_MANAGER = 'BUSINESS_MANAGER', 'مدیر کسب‌وکار'
+    SOCIAL_MEDIA_MANAGER = 'SOCIAL_MEDIA_MANAGER', 'مدیر شبکه‌های اجتماعی'
+    CONTENT_CREATOR = 'CONTENT_CREATOR', 'تولیدکننده محتوا'
+    OPS_MANAGER = 'OPS_MANAGER', 'مدیر عملیات و سفارشات'
     INVENTORY_MANAGER = 'INVENTORY_MANAGER', 'مدیر انبار'
     FULFILLMENT_STAFF = 'FULFILLMENT_STAFF', 'کارشناس ارسال و بسته‌بندی'
     SUPPORT = 'SUPPORT', 'پشتیبانی مشتریان'
     READ_ONLY = 'READ_ONLY', 'فقط خواندنی'
+    CUSTOM = 'CUSTOM', 'نقش سفارشی'
+
+class MembershipStatus(models.TextChoices):
+    ACTIVE = 'ACTIVE', 'فعال'
+    SUSPENDED = 'SUSPENDED', 'معلق'
+
+class InvitationStatus(models.TextChoices):
+    PENDING = 'PENDING', 'در انتظار پذیرش'
+    ACCEPTED = 'ACCEPTED', 'پذیرفته شده'
+    REVOKED = 'REVOKED', 'لغو شده'
+    EXPIRED = 'EXPIRED', 'منقضی شده'
 
 class Business(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -51,8 +65,11 @@ class StoreMembership(models.Model):
     store = models.ForeignKey(Store, on_delete=models.CASCADE, related_name='memberships')
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='store_memberships')
     role = models.CharField(max_length=30, choices=Role.choices, default=Role.OWNER, verbose_name="نقش")
+    status = models.CharField(max_length=20, choices=MembershipStatus.choices, default=MembershipStatus.ACTIVE, verbose_name="وضعیت عضویت")
     is_active = models.BooleanField(default=True, verbose_name="وضعیت فعال")
+    custom_permissions = models.JSONField(default=list, blank=True, verbose_name="دسترسی‌های سفارشی")
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         unique_together = ('store', 'user')
@@ -61,6 +78,27 @@ class StoreMembership(models.Model):
 
     def __str__(self):
         return f"{self.user} -> {self.store} ({self.get_role_display()})"
+
+class TeamInvitation(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    store = models.ForeignKey(Store, on_delete=models.CASCADE, related_name='invitations')
+    email = models.EmailField(verbose_name="ایمیل دعوت‌شونده")
+    role = models.CharField(max_length=30, choices=Role.choices, default=Role.CONTENT_CREATOR, verbose_name="نقش پیشنهادی")
+    inviter = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='sent_invitations')
+    token = models.CharField(max_length=100, unique=True, db_index=True)
+    status = models.CharField(max_length=20, choices=InvitationStatus.choices, default=InvitationStatus.PENDING, verbose_name="وضعیت دعوت‌نامه")
+    custom_permissions = models.JSONField(default=list, blank=True, verbose_name="دسترسی‌های سفارشی")
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(verbose_name="تاریخ انقضا")
+
+    class Meta:
+        verbose_name = 'دعوت‌نامه تیم'
+        verbose_name_plural = 'دعوت‌نامه‌های تیم'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Invite to {self.email} for {self.store.name} ({self.role})"
+
 
 class TenantScopedModel(models.Model):
     """Abstract model enforcing store-level isolation on every tenant record"""
