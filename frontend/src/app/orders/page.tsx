@@ -388,17 +388,17 @@ export default function OrdersPage() {
                   <div className="space-y-2 pt-2 border-t border-white/[0.04]">
                     <div className="text-slate-300 text-[11px] leading-relaxed">
                       <span className="text-slate-400 font-medium">اقدام پیشنهادی: </span>
-                      <span className="text-cyan-300">{orderRisk.recommended_action}</span>
+                      <span className="text-cyan-300">{orderRisk.recommendation_display || orderRisk.recommended_action || orderRisk.recommendation}</span>
                     </div>
-                    {orderRisk.flags && orderRisk.flags.length > 0 && (
+                    {((orderRisk.reasons && orderRisk.reasons.length > 0) || (orderRisk.flags && orderRisk.flags.length > 0)) && (
                       <div className="space-y-1">
-                        {orderRisk.flags.map((flag: any, idx: number) => (
+                        {(orderRisk.reasons || orderRisk.flags.map((f: any) => f.message || f)).map((reason: string, idx: number) => (
                           <div
                             key={idx}
                             className="flex items-start gap-1.5 text-[11px] text-amber-300/90 bg-amber-500/10 p-2 rounded-lg border border-amber-500/20"
                           >
                             <span>⚠️</span>
-                            <span>{flag.message}</span>
+                            <span>{reason}</span>
                           </div>
                         ))}
                       </div>

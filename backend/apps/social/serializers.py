@@ -119,7 +119,7 @@ class SocialContentListSerializer(serializers.ModelSerializer):
 class SocialContentDetailSerializer(SocialContentListSerializer):
     approval_logs = ContentApprovalLogSerializer(many=True, read_only=True)
     metric_snapshots = ContentMetricSnapshotSerializer(many=True, read_only=True)
-    related_product_title = serializers.CharField(source='related_product.title', read_only=True, default=None)
+    related_product_title = serializers.CharField(source='related_product.name', read_only=True, default=None)
 
     class Meta(SocialContentListSerializer.Meta):
         fields = SocialContentListSerializer.Meta.fields + [

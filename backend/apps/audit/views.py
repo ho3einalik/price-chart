@@ -80,6 +80,15 @@ class NotificationPreferenceView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+def sanitize_csv_value(val):
+    if val is None:
+        return ''
+    s = str(val)
+    if s and s[0] in ('=', '+', '-', '@', '\t', '\r'):
+        return "'" + s
+    return s
+
+
 class TeamActivitySummaryView(APIView):
     """
     Team workload and action audit overview.
@@ -93,13 +102,13 @@ class TeamActivitySummaryView(APIView):
 
         logs = AuditLog.objects.filter(store=request.store, created_at__gte=cutoff).exclude(user__isnull=True)
 
-        user_counts = logs.values('user__id', 'user__username', 'user__first_name', 'user__last_name').annotate(
+        user_counts = logs.values('user__id', 'user__full_name', 'user__email').annotate(
             total_actions=Count('id')
         ).order_by('-total_actions')
 
         activities = []
         for uc in user_counts:
-            full_name = f"{uc['user__first_name']} {uc['user__last_name']}".strip() or uc['user__username']
+            full_name = (uc['user__full_name'] or '').strip() or uc['user__email']
             # Top actions by this user
             top_acts = AuditLog.objects.filter(
                 store=request.store,
@@ -136,14 +145,15 @@ class AuditExportCSVView(APIView):
 
         logs = AuditLog.objects.filter(store=request.store).select_related('user').order_by('-created_at')[:1000]
         for log in logs:
+            user_display = (log.user.full_name or log.user.email) if log.user else 'سیستم خودکار'
             writer.writerow([
-                str(log.id),
-                log.user.username if log.user else 'سیستم خودکار',
-                log.action,
-                log.target_type,
-                log.target_id,
-                log.ip_address or '-',
-                log.created_at.strftime('%Y-%m-%d %H:%M:%S')
+                sanitize_csv_value(str(log.id)),
+                sanitize_csv_value(user_display),
+                sanitize_csv_value(log.action),
+                sanitize_csv_value(log.target_type),
+                sanitize_csv_value(log.target_id),
+                sanitize_csv_value(log.ip_address or '-'),
+                sanitize_csv_value(log.created_at.strftime('%Y-%m-%d %H:%M:%S'))
             ])
 
         return response

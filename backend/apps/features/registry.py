@@ -203,6 +203,55 @@ FEATURE_CATALOG: Dict[str, FeatureDefinition] = {
         depends_on=['core.catalog'],
         impact_warning_fa='رصد رقبا متوقف می‌شود.'
     ),
+    'suppliers.management': FeatureDefinition(
+        key='suppliers.management',
+        name_fa='مدیریت تأمین‌کنندگان و سفارشات خرید (PO)',
+        description_fa='ثبت سفارشات خرید، رهگیری ورود کالا و بدهی تأمین‌کنندگان',
+        category='OPERATIONS',
+        is_core=False,
+        default_enabled=True,
+        min_tier=SubscriptionTier.STARTER,
+        depends_on=['core.inventory']
+    ),
+    'wholesale_pos.cashier': FeatureDefinition(
+        key='wholesale_pos.cashier',
+        name_fa='صندوق فروش حضوری و عمده‌فروشی',
+        description_fa='فروش سریع، فاکتور عمده و محاسبه فوری اعتبار مشتریان B2B',
+        category='OPERATIONS',
+        is_core=False,
+        default_enabled=True,
+        min_tier=SubscriptionTier.STARTER,
+        depends_on=['core.orders', 'core.inventory']
+    ),
+    'marketing.abandoned_carts': FeatureDefinition(
+        key='marketing.abandoned_carts',
+        name_fa='بازیابی سبدهای خرید رهاشده',
+        description_fa='رهگیری سبدهای خرید رها شده و ارسال خودکار پیامک یادآوری',
+        category='MARKETING',
+        is_core=False,
+        default_enabled=True,
+        min_tier=SubscriptionTier.STARTER,
+        depends_on=['core.orders']
+    ),
+    'crm.customer_profiles': FeatureDefinition(
+        key='crm.customer_profiles',
+        name_fa='پروفایل ۳۶۰ درجه و مدیریت ارتباط با مشتریان (CRM)',
+        description_fa='بخش‌بندی RFM، یادداشت‌ها و تاریخچه تعاملات با مشتریان',
+        category='MARKETING',
+        is_core=False,
+        default_enabled=True,
+        min_tier=SubscriptionTier.STARTER,
+        depends_on=['core.orders']
+    ),
+    'automation.rules': FeatureDefinition(
+        key='automation.rules',
+        name_fa='موتور اتوماسیون و گردش کار خودکار',
+        description_fa='ایجاد قوانین خودکار بر مبنای رویدادها، ارسال پیامک و تعریف وظایف',
+        category='OPERATIONS',
+        is_core=False,
+        default_enabled=True,
+        min_tier=SubscriptionTier.PRO
+    ),
 }
 
 

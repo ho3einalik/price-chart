@@ -2,11 +2,14 @@ from decimal import Decimal
 from django.utils import timezone
 from django.db.models import Sum, Max, Count
 from .models import CustomerProfile, CustomerSegment
-from apps.orders.models import Customer, Order, OrderStatus
+from apps.orders.models import Customer, Order, OrderStatus, PaymentStatus
 
 def recalculate_customer_rfm(customer):
     """Calculate exact Recency, Frequency, and Monetary (LTV) metrics for a single customer"""
-    orders = Order.objects.filter(customer=customer).exclude(order_status=OrderStatus.CANCELLED)
+    orders = Order.objects.filter(
+        customer=customer,
+        payment_status=PaymentStatus.PAID
+    ).exclude(order_status=OrderStatus.CANCELLED)
     
     order_count = orders.count()
     if order_count == 0:

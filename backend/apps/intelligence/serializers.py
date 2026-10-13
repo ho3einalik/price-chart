@@ -3,8 +3,8 @@ from .models import CustomerFeedback, CompetitorPriceTrack
 from apps.catalog.serializers import ProductVariantSerializer
 
 class CustomerFeedbackSerializer(serializers.ModelSerializer):
-    customer_name = serializers.CharField(source='customer.full_name', read_only=True)
-    customer_phone = serializers.CharField(source='customer.phone', read_only=True)
+    customer_name = serializers.CharField(source='customer.full_name', read_only=True, default='')
+    customer_phone = serializers.CharField(source='customer.phone_number', read_only=True, default='')
     order_number = serializers.CharField(source='order.order_number', read_only=True)
     category_display = serializers.CharField(source='get_category_display', read_only=True)
     sentiment_display = serializers.CharField(source='get_sentiment_display', read_only=True)

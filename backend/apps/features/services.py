@@ -118,7 +118,7 @@ class FeatureService:
         if not entitled:
             return False, "PLAN_RESTRICTED", f"این قابلیت در پلن اشتراک فعلی شما موجود نیست. ({reason})"
 
-        # 3. Store-level toggle
+        # 3. Store-level toggle and activation check
         settings = cls.get_or_create_settings(store)
         if feature_key in (settings.disabled_features or []):
             return False, "FEATURE_DISABLED", f"ماژول '{feat.name_fa}' توسط مالک فروشگاه غیرفعال شده است."
@@ -128,6 +128,9 @@ class FeatureService:
         if missing_deps:
             missing_names = [get_feature(k).name_fa if get_feature(k) else k for k in missing_deps]
             return False, "DEPENDENCY_MISSING", f"این قابلیت نیازمند فعال بودن: {', '.join(missing_names)} است."
+
+        if not cls.is_feature_active(store, feature_key):
+            return False, "FEATURE_DISABLED", f"ماژول '{feat.name_fa}' برای این فروشگاه فعال نشده است."
 
         # 5. Integration Readiness
         if feat.required_integrations:

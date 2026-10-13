@@ -76,4 +76,4 @@ class NotificationPreference(models.Model):
         verbose_name_plural = 'تنظیمات دریافت اعلان‌ها'
 
     def __str__(self):
-        return f"Preferences of {self.user.username} for {self.store.name}"
+        return f"Preferences of {self.user.email or self.user.full_name} for {self.store.name}"

@@ -94,15 +94,19 @@ def pos_quick_checkout(store, session_id, items_data, customer_phone="0900000000
         row_total = unit_price * qty
         total_amount += row_total
 
-        # Atomic stock sale deduction from terminal warehouse
-        commit_stock_sale(
-            store=store,
-            warehouse=warehouse,
-            variant=variant,
-            quantity=qty,
-            reference=order.order_number,
-            user=user
-        )
+        from apps.inventory.services import InsufficientStockError
+        try:
+            # Atomic stock sale deduction from terminal warehouse
+            commit_stock_sale(
+                store=store,
+                warehouse=warehouse,
+                variant=variant,
+                quantity=qty,
+                reference=order.order_number,
+                user=user
+            )
+        except InsufficientStockError as e:
+            raise ValidationError(f"موجودی کافی در انبار {warehouse.name} برای تنوع {variant.sku} وجود ندارد: {str(e)}")
 
         OrderItem.objects.create(
             order=order,

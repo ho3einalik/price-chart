@@ -30,10 +30,11 @@ def evaluate_conditions(conditions, payload):
 
     return True
 
-def execute_actions(rule, actions, payload):
-    """Execute defined actions for a triggered rule"""
+def execute_actions(rule, actions, payload, dry_run=False):
+    """Execute defined actions for a triggered rule (or simulate if dry_run=True)"""
     results = []
     store = rule.store
+    creator = getattr(rule, 'created_by', None) or store.business.owner
 
     for act in actions:
         act_type = act.get('type')
@@ -42,27 +43,36 @@ def execute_actions(rule, actions, payload):
             title = act.get('title', f"وظیفه خودکار: {rule.name}")
             desc = act.get('description', f"ایجاد شده توسط اتوماسیون بر اساس رویداد {rule.trigger}.\nجزئیات: {payload}")
             priority = act.get('priority', TaskPriority.MEDIUM)
-            Task.objects.create(
-                store=store,
-                title=title,
-                description=desc,
-                priority=priority,
-                status=TaskStatus.TODO
-            )
-            results.append(f"وظیفه '{title}' با موفقیت در کارتابل تیم ثبت شد.")
+            if dry_run:
+                results.append(f"[شبیه‌سازی] وظیفه '{title}' با اولویت {priority} در کارتابل تیم ایجاد خواهد شد.")
+            else:
+                Task.objects.create(
+                    store=store,
+                    title=title,
+                    description=desc,
+                    priority=priority,
+                    status=TaskStatus.TODO,
+                    creator=creator
+                )
+                results.append(f"وظیفه '{title}' با موفقیت در کارتابل تیم ثبت شد.")
 
         elif act_type == 'SEND_SMS':
             phone = payload.get('customer_phone') or payload.get('phone_number')
             template = act.get('template', 'سفارش شما در فروشگاه با موفقیت ثبت شد.')
-            if phone:
+            if dry_run:
+                results.append(f"[شبیه‌سازی] پیامک به شماره {phone or 'نامشخص'} ارسال خواهد شد: {template}")
+            elif phone:
                 sms_adapter = get_integration_adapter('sms_gateway')
-                sms_res = sms_adapter.send_sms(to=phone, message=template)
+                sms_res = sms_adapter.send_sms(to=phone, message=template, store=store)
                 results.append(f"پیامک به شماره {phone} ارسال شد (وضعیت: {sms_res.get('status')}).")
             else:
                 results.append("شماره تلفنی در داده‌های رویداد برای ارسال پیامک یافت نشد.")
 
         elif act_type == 'NOTIFY_TEAM':
-            results.append(f"اعلان سیستمی برای تیم ثبت شد: {act.get('message', 'رویداد اتوماسیون')}")
+            if dry_run:
+                results.append(f"[شبیه‌سازی] اعلان سیستمی برای تیم ثبت خواهد شد: {act.get('message', 'رویداد اتوماسیون')}")
+            else:
+                results.append(f"اعلان سیستمی برای تیم ثبت شد: {act.get('message', 'رویداد اتوماسیون')}")
 
     return "\n".join(results)
 

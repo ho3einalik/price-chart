@@ -135,13 +135,47 @@ class AbandonedCartViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='trigger-recovery')
     def trigger_recovery(self, request, pk=None):
+        from apps.features.adapters import get_integration_adapter
         cart = self.get_object()
+
+        if cart.status == AbandonedCartStatus.RECOVERED:
+            return Response(
+                {'error': 'این سبد خرید پیش‌تر بازیابی و تکمیل شده است.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 2-hour anti-spam cooldown check
+        if cart.recovery_sms_sent_at and (timezone.now() - cart.recovery_sms_sent_at).total_seconds() < 7200:
+            return Response(
+                {'error': 'پیامک یادآوری اخیراً ارسال شده است. لطفاً حداقل ۲ ساعت بین پیامک‌ها فاصله بگذارید.'},
+                status=status.HTTP_429_TOO_MANY_REQUESTS
+            )
+
+        target_phone = cart.phone_or_email
+        if not target_phone or '@' in target_phone:
+            if cart.customer and cart.customer.phone_number:
+                target_phone = cart.customer.phone_number
+
+        if not target_phone or '@' in target_phone:
+            return Response(
+                {'error': 'شماره موبایل معتبر برای ارسال پیامک یادآوری یافت نشد.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        sms_adapter = get_integration_adapter('sms_gateway')
+        msg = f"سلام! سبد خرید شما در فروشگاه {cart.store.name} در انتظار شماست. برای تکمیل خرید به وبسایت مراجعه فرمایید."
+        if cart.recovery_coupon:
+            msg += f" کد تخفیف ویژه شما: {cart.recovery_coupon.code}"
+
+        sms_res = sms_adapter.send_sms(to=target_phone, message=msg, store=cart.store)
         cart.recovery_sms_sent_at = timezone.now()
         cart.save(update_fields=['recovery_sms_sent_at'])
+
         return Response({
-            'message': f"پیامک یادآوری سبد خرید رهاشده به {cart.phone_or_email} با موفقیت ارسال گردید.",
+            'message': f"درخواست ارسال پیامک یادآوری به {target_phone} ثبت شد.",
             'cart_id': str(cart.id),
-            'sent_at': cart.recovery_sms_sent_at
+            'sent_at': cart.recovery_sms_sent_at,
+            'sms_status': sms_res.get('status')
         })
 
 

@@ -23,6 +23,7 @@ class AutomationRuleViewSet(viewsets.ModelViewSet):
     def test_run(self, request, pk=None):
         rule = self.get_object()
         sample_payload = request.data.get('payload', {})
+        dry_run = request.data.get('dry_run', True)
         matches = evaluate_conditions(rule.conditions, sample_payload)
         if not matches:
             return Response({
@@ -30,9 +31,10 @@ class AutomationRuleViewSet(viewsets.ModelViewSet):
                 'message': 'داده‌های تستی ارسالی با شرایط تعیین‌شده در این قانون مطابقت ندارند.'
             })
 
-        output = execute_actions(rule, rule.actions, sample_payload)
+        output = execute_actions(rule, rule.actions, sample_payload, dry_run=dry_run)
         return Response({
             'matched': True,
-            'message': 'قانون اتوماسیون با موفقیت تست و اجرا شد.',
+            'dry_run': dry_run,
+            'message': 'قانون اتوماسیون با موفقیت شبیه‌سازی و تست شد.' if dry_run else 'قانون اتوماسیون با موفقیت تست و اجرا شد.',
             'execution_output': output
         })

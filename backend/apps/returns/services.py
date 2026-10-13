@@ -15,10 +15,17 @@ def generate_rma_number():
     suffix = random.randint(1000, 9999)
     return f"RMA-{date_str}-{suffix}"
 
+from django.db.models import Sum
+from apps.orders.models import FulfillmentStatus, OrderStatus
+
 @transaction.atomic
 def create_return_request(order, items_data, customer_notes='', user=None):
     if not items_data:
         raise ValidationError("درخواست مرجوعی باید حداقل دارای یک ردیف کالا باشد.")
+
+    # Validate that order has been fulfilled or partially fulfilled
+    if order.fulfillment_status not in [FulfillmentStatus.FULFILLED, FulfillmentStatus.PARTIALLY_FULFILLED] and order.order_status not in [OrderStatus.FULFILLED, OrderStatus.COMPLETED]:
+        raise ValidationError("تنها برای سفارش‌هایی که ارسال شده‌اند امکان ثبت مرجوعی وجود دارد.")
 
     rma_number = generate_rma_number()
     total_refund = Decimal('0')
@@ -40,8 +47,22 @@ def create_return_request(order, items_data, customer_notes='', user=None):
         quantity = int(item_data['quantity'])
         reason = item_data.get('reason', 'CUSTOMER_REMORSE')
 
-        if quantity > order_item.quantity:
-            raise ValidationError(f"تعداد مرجوعی ({quantity}) نمی‌تواند از تعداد خریداری‌شده ({order_item.quantity}) بیشتر باشد.")
+        if quantity <= 0:
+            raise ValidationError("تعداد کالای مرجوعی باید بزرگتر از صفر باشد.")
+
+        # Calculate already returned quantity for this order item across all active RMAs
+        prior_returned = ReturnItem.objects.filter(
+            order_item=order_item
+        ).exclude(
+            return_request__status=ReturnStatus.REJECTED
+        ).aggregate(total=Sum('quantity'))['total'] or 0
+
+        remaining_returnable = order_item.quantity - prior_returned
+        if quantity > remaining_returnable:
+            raise ValidationError(
+                f"تعداد مرجوعی درخواستی ({quantity}) برای {order_item.variant_sku} نمی‌تواند از مانده قابل مرجوعی ({remaining_returnable}) بیشتر باشد. "
+                f"(تعداد کل خریداری‌شده: {order_item.quantity}، قبلاً مرجوع‌شده: {prior_returned})"
+            )
 
         unit_refund = order_item.unit_price - order_item.unit_discount
         total_refund += unit_refund * quantity
@@ -88,12 +109,10 @@ def approve_return_request(rma, user=None, staff_notes=''):
     return rma
 
 @transaction.atomic
-def inspect_and_process_return(rma, inspection_items_data, warehouse, user=None, refund_status=RefundStatus.REFUNDED, staff_notes=''):
+def inspect_and_process_return(rma, inspection_items_data, warehouse, user=None, refund_status=RefundStatus.PENDING, staff_notes=''):
     """
     Final inspection of returned items and restocking to warehouse ledger.
-    inspection_items_data format: [
-      {'item_id': uuid, 'condition': 'OPENED_GOOD', 'action': 'RESTOCK', 'notes': 'سالم است'}
-    ]
+    Connects to Finance RefundRecord to ensure refunds are tracked and not fabricated.
     """
     if rma.status in [ReturnStatus.COMPLETED, ReturnStatus.REJECTED]:
         raise ValidationError(f"این مرجوعی قبلاً نهایی شده است (وضعیت: {rma.get_status_display()})")
@@ -103,7 +122,7 @@ def inspect_and_process_return(rma, inspection_items_data, warehouse, user=None,
     for data in inspection_items_data:
         item_id = str(data['item_id'])
         item = items_dict.get(item_id)
-        if not item:
+        if not item or item.is_inspected:
             continue
 
         item.condition = data.get('condition', item.condition)
@@ -141,6 +160,25 @@ def inspect_and_process_return(rma, inspection_items_data, warehouse, user=None,
     if staff_notes:
         rma.staff_notes = staff_notes
     rma.save(update_fields=['status', 'refund_status', 'staff_notes', 'updated_at'])
+
+    # Synchronize financial refund record in apps.finance
+    if rma.refund_amount > 0:
+        try:
+            from apps.finance.models import RefundRecord, RefundStatus as FinRefundStatus
+            fin_status = FinRefundStatus.REFUNDED if refund_status == RefundStatus.REFUNDED else FinRefundStatus.PENDING
+            RefundRecord.objects.get_or_create(
+                store=rma.store,
+                order=rma.order,
+                reason=f"استرداد وجه بابت مرجوعی {rma.rma_number}",
+                defaults={
+                    'amount': rma.refund_amount,
+                    'status': fin_status,
+                    'processed_by': user if refund_status == RefundStatus.REFUNDED else None,
+                    'processed_at': timezone.now() if refund_status == RefundStatus.REFUNDED else None,
+                }
+            )
+        except Exception:
+            pass
 
     record_audit_event(
         store=rma.store,

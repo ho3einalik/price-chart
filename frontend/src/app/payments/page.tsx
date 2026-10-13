@@ -256,15 +256,19 @@ export default function PaymentsAndFinancePage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <a
-            href={api.getFinanceExportCSVUrl()}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/20 px-3.5 py-2 rounded-xl text-xs font-semibold transition"
+          <button
+            onClick={async () => {
+              try {
+                await api.downloadFile('/finance/export-csv/', `financial_report_${new Date().toISOString().slice(0, 10)}.csv`);
+              } catch (e: any) {
+                alert(`خطا در دریافت فایل گزارش مالی: ${e.message}`);
+              }
+            }}
+            className="flex items-center gap-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/20 px-3.5 py-2 rounded-xl text-xs font-semibold transition cursor-pointer"
           >
             <FileSpreadsheet className="w-4 h-4" />
             خروجی اکسل و CSV گزارش مالی
-          </a>
+          </button>
 
           {/* Tab Switcher */}
           <div className="flex flex-wrap items-center gap-1.5 p-1 bg-white/[0.04] border border-white/[0.08] rounded-2xl">

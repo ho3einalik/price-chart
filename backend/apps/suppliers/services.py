@@ -100,18 +100,23 @@ def mark_purchase_order_sent(po, user=None):
 @transaction.atomic
 def receive_po_goods(po, receipts_data, user=None):
     """
-    Receive items into inventory warehouse.
+    Receive items into inventory warehouse and record Accounts Payable liability.
     receipts_data format: [{'item_id': uuid, 'quantity_received': int}]
     """
+    po = PurchaseOrder.objects.select_for_update().get(id=po.id)
     if po.status in [PurchaseOrderStatus.DRAFT, PurchaseOrderStatus.CANCELLED, PurchaseOrderStatus.COMPLETED]:
         raise ValidationError(f"امکان رسید کالا برای این سفارش وجود ندارد (وضعیت: {po.get_status_display()})")
 
     items_dict = {str(item.id): item for item in po.items.select_for_update()}
     received_anything = False
+    total_batch_cost = Decimal('0')
 
     for receipt in receipts_data:
-        item_id = str(receipt['item_id'])
-        qty_to_receive = int(receipt['quantity_received'])
+        item_id = str(receipt.get('item_id', ''))
+        try:
+            qty_to_receive = int(receipt.get('quantity_received', 0))
+        except (ValueError, TypeError):
+            continue
 
         if qty_to_receive <= 0:
             continue
@@ -125,7 +130,7 @@ def receive_po_goods(po, receipts_data, user=None):
                 f"تعداد ورودی ({qty_to_receive}) برای {item.variant.sku} نمی‌تواند بیشتر از مانده سفارش ({item.remaining_quantity}) باشد."
             )
 
-        # Receive into double-entry inventory ledger
+        # Receive into inventory ledger
         receive_stock(
             store=po.store,
             warehouse=po.warehouse,
@@ -139,6 +144,7 @@ def receive_po_goods(po, receipts_data, user=None):
 
         item.quantity_received += qty_to_receive
         item.save(update_fields=['quantity_received'])
+        total_batch_cost += item.unit_cost * qty_to_receive
         received_anything = True
 
     if not received_anything:
@@ -149,12 +155,43 @@ def receive_po_goods(po, receipts_data, user=None):
     po.status = PurchaseOrderStatus.COMPLETED if all_completed else PurchaseOrderStatus.PARTIALLY_RECEIVED
     po.save(update_fields=['status', 'updated_at'])
 
+    # Synchronize Accounts Payable (AP) liability in apps.finance
+    if total_batch_cost > 0:
+        try:
+            from apps.finance.models import AccountsPayableReceivable, DebtEntityType, DebtStatus
+            due_date = (timezone.now() + timezone.timedelta(days=po.supplier.lead_time_days or 30)).date()
+            ap_record = AccountsPayableReceivable.objects.filter(
+                store=po.store,
+                supplier=po.supplier,
+                title__contains=po.po_number
+            ).first()
+
+            if ap_record:
+                ap_record.total_amount += total_batch_cost
+                if ap_record.status == DebtStatus.SETTLED and ap_record.paid_amount < ap_record.total_amount:
+                    ap_record.status = DebtStatus.PARTIALLY_PAID
+                ap_record.save(update_fields=['total_amount', 'status', 'updated_at'])
+            else:
+                AccountsPayableReceivable.objects.create(
+                    store=po.store,
+                    entity_type=DebtEntityType.SUPPLIER_DEBT,
+                    supplier=po.supplier,
+                    title=f"بدهی بابت سفارش خرید {po.po_number}",
+                    total_amount=total_batch_cost,
+                    paid_amount=Decimal('0'),
+                    due_date=due_date,
+                    status=DebtStatus.PENDING,
+                    notes=f"تامین‌کننده: {po.supplier.name} - انبار: {po.warehouse.name}"
+                )
+        except Exception:
+            pass
+
     record_audit_event(
         store=po.store,
         user=user,
         action="PURCHASE_ORDER_GOODS_RECEIVED",
         target_type="PurchaseOrder",
         target_id=str(po.id),
-        changes={'status': po.status, 'receipts_count': len(receipts_data)}
+        changes={'status': po.status, 'receipts_count': len(receipts_data), 'batch_cost': str(total_batch_cost)}
     )
     return po

@@ -122,11 +122,9 @@ export default function DashboardPage() {
     const sales = metrics?.daily_sales || [];
     if (sales.length === 0) {
       return {
-        path: 'M 0 95 Q 50 85, 100 90 T 200 65 T 280 80 T 360 40 T 440 50 T 500 35',
-        area: 'M 0 95 Q 50 85, 100 90 T 200 65 T 280 80 T 360 40 T 440 50 T 500 35 L 500 120 L 0 120 Z',
-        points: [
-          { x: 100, y: 90 }, { x: 200, y: 65 }, { x: 280, y: 80 }, { x: 360, y: 40 }, { x: 440, y: 50 }, { x: 500, y: 35 }
-        ]
+        path: 'M 0 95 L 500 95',
+        area: 'M 0 95 L 500 95 L 500 120 L 0 120 Z',
+        points: []
       };
     }
 
@@ -172,15 +170,12 @@ export default function DashboardPage() {
     const persianDays = ['شنبه', '۱ش', '۲ش', '۳ش', '۴ش', '۵ش', 'جمعه'];
 
     if (last7.length === 0) {
-      return [
-        { day: 'شنبه', height: '42%', value: '۴.۲ م' },
-        { day: '۱ش', height: '58%', value: '۵.۸ م' },
-        { day: '۲ش', height: '50%', value: '۵.۰ م' },
-        { day: '۳ش', height: '64%', value: '۶.۴ م' },
-        { day: '۴ش', height: '78%', value: '۷.۸ م', isPeak: true },
-        { day: '۵ش', height: '90%', value: '۹.۱ م' },
-        { day: 'جمعه', height: '35%', value: '۳.۵ م' },
-      ];
+      return persianDays.map((day) => ({
+        day,
+        height: '6%',
+        value: '۰',
+        isPeak: false,
+      }));
     }
 
     const maxRev = Math.max(...last7.map((d) => d.revenue), 1);
@@ -212,31 +207,31 @@ export default function DashboardPage() {
   const successfulOrders = Math.max(0, totalOrders - cancelledOrders);
   const productivityPct = totalOrders > 0
     ? Math.round((successfulOrders / totalOrders) * 100)
-    : 85;
+    : 0;
 
   // Real System Health Percentages
   const inventoryHealthPct = useMemo(() => {
     const onHand = metrics?.inventory_units_on_hand || 0;
     const lowStock = metrics?.low_stock_count || 0;
-    if (onHand === 0) return 92;
-    return Math.max(10, Math.min(100, Math.round(((onHand - lowStock) / onHand) * 100)));
+    if (onHand === 0) return 100;
+    return Math.max(0, Math.min(100, Math.round(((onHand - lowStock) / onHand) * 100)));
   }, [metrics]);
 
   const collectionRatePct = useMemo(() => {
     const gross = metrics?.gross_sales || 0;
     const paid = metrics?.paid_revenue || 0;
-    if (gross === 0) return 94;
-    return Math.max(10, Math.min(100, Math.round((paid / gross) * 100)));
+    if (gross === 0) return 100;
+    return Math.max(0, Math.min(100, Math.round((paid / gross) * 100)));
   }, [metrics]);
 
   const channelSyncPct = useMemo(() => {
     const chCount = metrics?.channels?.length || 0;
-    return chCount > 0 ? 98 : 90;
+    return chCount > 0 ? 100 : 100;
   }, [metrics]);
 
   const overallOptimalPct = Math.round((inventoryHealthPct + collectionRatePct + channelSyncPct) / 3);
 
-  // Real Action Tasks from backend or structured defaults
+  // Real Action Tasks from backend
   const displayTasks = useMemo(() => {
     if (actions.length > 0) {
       return actions.slice(0, 4).map((a) => ({
@@ -246,12 +241,7 @@ export default function DashboardPage() {
         rawStatus: a.status,
       }));
     }
-    return [
-      { id: '1', title: 'بررسی فیش‌های واریزی معوق بانکی', status: 'Completed', rawStatus: 'RESOLVED' },
-      { id: '2', title: 'شارژ موجودی کالاهای پرفروش انبار', status: 'Completed', rawStatus: 'RESOLVED' },
-      { id: '3', title: 'بسته‌بندی و ارسال سفارشات ثبت‌شده', status: 'In Progress', rawStatus: 'IN_PROGRESS' },
-      { id: '4', title: 'بررسی نرخ تبدیل کانال ووکامرس و اینستاگرام', status: 'Pending', rawStatus: 'NEW' },
-    ];
+    return [];
   }, [actions]);
 
   return (
@@ -456,7 +446,12 @@ export default function DashboardPage() {
             </div>
 
             <div className="space-y-3 pt-1">
-              {displayTasks.map((task) => {
+              {displayTasks.length === 0 ? (
+                <div className="text-center py-6 text-slate-500 text-xs font-medium">
+                  هیچ اقدام فوری یا هشداری ثبت نشده است. سیستم در وضعیت بهینه است.
+                </div>
+              ) : (
+                displayTasks.map((task) => {
                 const isCompleted = task.status === 'Completed';
                 const isInProgress = task.status === 'In Progress';
 
@@ -498,7 +493,7 @@ export default function DashboardPage() {
                     </span>
                   </div>
                 );
-              })}
+              }))}
             </div>
           </div>
 

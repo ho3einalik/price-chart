@@ -20,18 +20,84 @@ class ApiClient {
     return headers;
   }
 
+  private isRefreshing = false;
+  private refreshSubscribers: ((token: string) => void)[] = [];
+
+  private onTokenRefreshed(token: string) {
+    this.refreshSubscribers.forEach((cb) => cb(token));
+    this.refreshSubscribers = [];
+  }
+
+  private addRefreshSubscriber(cb: (token: string) => void) {
+    this.refreshSubscribers.push(cb);
+  }
+
   async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const url = `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
     const headers = this.getHeaders(options.headers as Record<string, string>);
 
-    const response = await fetch(url, {
+    let response = await fetch(url, {
       ...options,
       headers,
     });
 
-    if (response.status === 401 && typeof window !== 'undefined') {
-      // Token expired or invalid
-      // localStorage.removeItem('shoppilot_access_token');
+    if (
+      response.status === 401 &&
+      typeof window !== 'undefined' &&
+      !endpoint.includes('/auth/login/') &&
+      !endpoint.includes('/auth/token/refresh/')
+    ) {
+      const refreshToken = localStorage.getItem('shoppilot_refresh_token');
+      if (refreshToken) {
+        if (!this.isRefreshing) {
+          this.isRefreshing = true;
+          try {
+            const refreshRes = await fetch(`${API_BASE_URL}/auth/token/refresh/`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ refresh: refreshToken }),
+            });
+
+            if (refreshRes.ok) {
+              const refreshData = await refreshRes.json();
+              const newAccess = refreshData.access;
+              localStorage.setItem('shoppilot_access_token', newAccess);
+              this.isRefreshing = false;
+              this.onTokenRefreshed(newAccess);
+
+              // Retry original request with new access token
+              const newHeaders = this.getHeaders(options.headers as Record<string, string>);
+              response = await fetch(url, {
+                ...options,
+                headers: newHeaders,
+              });
+            } else {
+              this.isRefreshing = false;
+              localStorage.removeItem('shoppilot_access_token');
+              localStorage.removeItem('shoppilot_refresh_token');
+            }
+          } catch {
+            this.isRefreshing = false;
+          }
+        } else {
+          return new Promise<T>((resolve, reject) => {
+            this.addRefreshSubscriber(async () => {
+              try {
+                const newHeaders = this.getHeaders(options.headers as Record<string, string>);
+                const retryRes = await fetch(url, { ...options, headers: newHeaders });
+                if (!retryRes.ok) {
+                  const errorData = await retryRes.json().catch(() => ({}));
+                  reject(new Error(errorData.error || errorData.detail || `Error ${retryRes.status}`));
+                } else {
+                  resolve(await retryRes.json());
+                }
+              } catch (e) {
+                reject(e);
+              }
+            });
+          });
+        }
+      }
     }
 
     if (!response.ok) {
@@ -44,6 +110,24 @@ class ApiClient {
     }
 
     return response.json();
+  }
+
+  async downloadFile(endpoint: string, filename: string): Promise<void> {
+    const url = `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+    const headers = this.getHeaders();
+    const res = await fetch(url, { headers });
+    if (!res.ok) {
+      throw new Error(`Failed to download file: ${res.statusText}`);
+    }
+    const blob = await res.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(downloadUrl);
   }
 
   // Auth
@@ -725,14 +809,14 @@ class ApiClient {
 
   // Social & Team Proof
   async submitContentProof(contentId: string, data: { proof_url?: string; proof_image_url?: string }) {
-    return this.request<any>(`/social/contents/${contentId}/submit-proof/`, {
+    return this.request<any>(`/social/content/${contentId}/submit-proof/`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
   async verifyContentProof(contentId: string) {
-    return this.request<any>(`/social/contents/${contentId}/verify-proof/`, {
+    return this.request<any>(`/social/content/${contentId}/verify-proof/`, {
       method: 'POST',
     });
   }
@@ -762,7 +846,7 @@ class ApiClient {
   }
 
   async recoverAbandonedCart(cartId: string, couponCode?: string) {
-    return this.request<any>(`/marketing/abandoned-carts/${cartId}/recover/`, {
+    return this.request<any>(`/marketing/abandoned-carts/${cartId}/trigger-recovery/`, {
       method: 'POST',
       body: JSON.stringify({ coupon_code: couponCode }),
     });

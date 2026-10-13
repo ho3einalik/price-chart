@@ -78,15 +78,23 @@ def release_stock_reservation(store, warehouse, variant, quantity, reference='',
 
 @transaction.atomic
 def commit_stock_sale(store, warehouse, variant, quantity, reference='', user=None):
-    """Convert reservation to actual sale deduction from on_hand_quantity"""
+    """Convert reservation to actual sale deduction from on_hand_quantity with strict inventory check"""
     if quantity <= 0:
         return None
 
     balance = get_or_create_balance(store, warehouse, variant)
-    # Deduct from reservation if available, else direct
+
+    # Strictly verify on-hand quantity: NEVER silently clamp to zero
+    if balance.on_hand_quantity < quantity:
+        raise InsufficientStockError(
+            f"موجودی فیزیکی در انبار {warehouse.name} برای {variant.sku} کافی نیست. "
+            f"موجودی موجود: {balance.on_hand_quantity}، مقدار درخواستی: {quantity}"
+        )
+
+    # Deduct from reservation if available
     reserved_deduct = min(quantity, balance.reserved_quantity)
     balance.reserved_quantity -= reserved_deduct
-    balance.on_hand_quantity = max(0, balance.on_hand_quantity - quantity)
+    balance.on_hand_quantity -= quantity
     balance.save()
 
     InventoryMovement.objects.create(
@@ -101,6 +109,60 @@ def commit_stock_sale(store, warehouse, variant, quantity, reference='', user=No
         user=user
     )
     return balance
+
+@transaction.atomic
+def transfer_stock(store, source_warehouse, dest_warehouse, variant, quantity, reference='', reason='', user=None):
+    """Safely transfers stock between two warehouses of the same store with ledger entries"""
+    if quantity <= 0:
+        raise ValueError("تعداد انتقال باید بیشتر از صفر باشد.")
+    if source_warehouse.id == dest_warehouse.id:
+        raise ValueError("انبار مبدا و مقصد نمی‌تواند یکسان باشد.")
+
+    src_balance = get_or_create_balance(store, source_warehouse, variant)
+    if src_balance.available < quantity:
+        raise InsufficientStockError(f"موجودی قابل انتقال در انبار مبدا کافی نیست: {src_balance.available}")
+
+    dest_balance = get_or_create_balance(store, dest_warehouse, variant)
+
+    src_balance.on_hand_quantity -= quantity
+    src_balance.save()
+
+    dest_balance.on_hand_quantity += quantity
+    dest_balance.save()
+
+    InventoryMovement.objects.create(
+        store=store,
+        warehouse=source_warehouse,
+        variant=variant,
+        movement_type=MovementType.TRANSFER_OUT,
+        quantity=-quantity,
+        balance_after=src_balance.on_hand_quantity,
+        reference=reference or f"TRF-{dest_warehouse.name}",
+        reason=reason or f"انتقال خروجی به انبار {dest_warehouse.name}",
+        user=user
+    )
+
+    InventoryMovement.objects.create(
+        store=store,
+        warehouse=dest_warehouse,
+        variant=variant,
+        movement_type=MovementType.TRANSFER_IN,
+        quantity=quantity,
+        balance_after=dest_balance.on_hand_quantity,
+        reference=reference or f"TRF-{source_warehouse.name}",
+        reason=reason or f"انتقال ورودی از انبار {source_warehouse.name}",
+        user=user
+    )
+
+    record_audit_event(
+        store=store,
+        user=user,
+        action="STOCK_TRANSFERRED",
+        target_type="ProductVariant",
+        target_id=str(variant.id),
+        changes={'source': source_warehouse.name, 'dest': dest_warehouse.name, 'quantity': quantity}
+    )
+    return src_balance, dest_balance
 
 @transaction.atomic
 def adjust_stock(store, warehouse, variant, new_on_hand, reason='', reference='', user=None):
