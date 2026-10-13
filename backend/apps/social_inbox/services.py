@@ -21,6 +21,18 @@ def generate_ai_suggested_reply(thread, context_hint=''):
         for p in products
     ])
 
+    # Fetch customer's recent orders if available
+    customer = getattr(thread, 'customer', None)
+    orders_context = ""
+    if customer:
+        from apps.orders.models import Order
+        recent_orders = Order.objects.filter(store=store, customer=customer).order_by('-created_at')[:2]
+        if recent_orders.exists():
+            orders_context = "\nآخرین وضعیت سفارشات مشتری:\n" + "\n".join([
+                f"- سفارش {o.order_number}: وضعیت ارسال={o.get_fulfillment_status_display()}، وضعیت پرداخت={o.get_payment_status_display()}، مبلغ={o.grand_total:,} {store.currency}"
+                for o in recent_orders
+            ])
+
     prompt = f"""
 شما پشتیبان فروشگاه {store.name} در دایرکت هستید.
 مخاطب: {thread.contact_name} ({thread.contact_handle})
@@ -29,6 +41,7 @@ def generate_ai_suggested_reply(thread, context_hint=''):
 
 محصولات برگزیده در دسترس فروشگاه:
 {catalog_context}
+{orders_context}
 
 لطفاً یک پاسخ بسیار محترمانه، صمیمی، دقیق و مختصر بنویسید. در صورتی که قیمت پرسیده شده، قیمت دقیق موجود در کاتالوگ را بگویید و اعلام کنید ارسال از طریق پست پیشتاز و تیپاکس به سراسر کشور انجام می‌شود.
 """

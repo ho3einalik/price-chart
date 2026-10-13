@@ -1,6 +1,7 @@
 import uuid
 from decimal import Decimal
 from django.db import models
+from django.conf import settings
 from django.utils import timezone
 from apps.tenancy.models import TenantScopedModel
 from apps.orders.models import Customer
@@ -94,6 +95,56 @@ class CustomerLoyaltyAccount(TenantScopedModel):
         return f"{self.customer.full_name}: {self.points_balance} امتیاز ({self.get_tier_display()})"
 
 
+class LoyaltyActionType(models.TextChoices):
+    PURCHASE = 'PURCHASE', 'خرید و ثبت سفارش'
+    REFERRAL = 'REFERRAL', 'معرفی مشتری جدید'
+    REDEMPTION = 'REDEMPTION', 'استفاده از امتیاز برای تخفیف'
+    ADMIN_ADJUSTMENT = 'ADMIN_ADJUSTMENT', 'تعدیل دستی توسط مدیر'
+    PROMOTION = 'PROMOTION', 'پاداش کمپین ویژه'
+    REFUND_REVERSAL = 'REFUND_REVERSAL', 'کسر امتیاز به علت عودت کالا'
+
+
+class LoyaltyPointsLedger(TenantScopedModel):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    account = models.ForeignKey(
+        CustomerLoyaltyAccount,
+        on_delete=models.CASCADE,
+        related_name='ledger_entries',
+        verbose_name="حساب باشگاه مشتریان"
+    )
+    points_delta = models.IntegerField(verbose_name="تغییر امتیاز (مثبت یا منفی)")
+    action_type = models.CharField(
+        max_length=30,
+        choices=LoyaltyActionType.choices,
+        default=LoyaltyActionType.PURCHASE,
+        verbose_name="نوع عملیات"
+    )
+    order = models.ForeignKey(
+        'orders.Order',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='loyalty_ledger_entries',
+        verbose_name="سفارش مرتبط"
+    )
+    staff_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        verbose_name="کاربر ثبت‌کننده (در صورت تعدیل دستی)"
+    )
+    note = models.CharField(max_length=255, blank=True, verbose_name="توضیحات تراکنش امتیاز")
+
+    class Meta:
+        verbose_name = 'دفتر کل تراکنش‌های امتیاز وفاداری'
+        verbose_name_plural = 'دفتر کل تراکنش‌های امتیازات وفاداری'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.account.customer.full_name}: {self.points_delta:+d} ({self.get_action_type_display()})"
+
+
 class ProductBundle(TenantScopedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=200, verbose_name="نام بسته / باندل")
@@ -167,6 +218,13 @@ class CustomerReferral(TenantScopedModel):
         verbose_name = 'معرفی مشتری (Referral)'
         verbose_name_plural = 'معرفی‌های مشتریان'
         ordering = ['-created_at']
+
+    def clean(self):
+        super().clean()
+        if self.referrer and self.referrer.phone_number:
+            if self.referrer.phone_number.strip() == self.referee_phone.strip():
+                from django.core.exceptions import ValidationError
+                raise ValidationError("مشتری نمی‌تواند شماره تماس خود را به عنوان معرف ثبت کند.")
 
     def __str__(self):
         return f"{self.referrer.full_name} -> {self.referee_phone} ({self.get_status_display()})"

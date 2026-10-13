@@ -32,3 +32,23 @@ class IntegrationConfigInputSerializer(serializers.Serializer):
     name = serializers.CharField()
     state = serializers.ChoiceField(choices=IntegrationState.choices)
     credentials = serializers.DictField(required=False, default=dict)
+
+
+from .models import SubscriptionInvoice, InvoiceStatus
+
+class SubscriptionInvoiceSerializer(serializers.ModelSerializer):
+    tier_display = serializers.CharField(source='get_tier_display', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+
+    class Meta:
+        model = SubscriptionInvoice
+        fields = [
+            'id', 'store', 'tier', 'tier_display', 'amount', 'status',
+            'status_display', 'payment_reference', 'gateway_tracking_code',
+            'created_at', 'paid_at'
+        ]
+        read_only_fields = ['id', 'store', 'status', 'created_at', 'paid_at']
+
+
+class CreateInvoiceInputSerializer(serializers.Serializer):
+    tier = serializers.ChoiceField(choices=SubscriptionTier.choices)

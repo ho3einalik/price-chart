@@ -6,8 +6,16 @@ from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-DEBUG = os.environ.get('DJANGO_DEBUG', 'True').lower() in ('true', '1', 't')
-raw_secret = os.environ.get('DJANGO_SECRET_KEY', '')
+raw_debug = os.environ.get('DJANGO_DEBUG')
+if raw_debug is None:
+    raw_debug = os.environ.get('DEBUG', 'True')
+DEBUG = str(raw_debug).strip().lower() in ('true', '1', 't')
+
+environment = os.environ.get('ENVIRONMENT', os.environ.get('DJANGO_ENV', 'development')).strip().lower()
+if environment in ('production', 'prod') and DEBUG:
+    raise ImproperlyConfigured("DEBUG cannot be True when ENVIRONMENT is production.")
+
+raw_secret = os.environ.get('DJANGO_SECRET_KEY', os.environ.get('SECRET_KEY', ''))
 
 if not DEBUG:
     if not raw_secret or raw_secret == 'dev-shoppilot-insecure-key-1234567890' or len(raw_secret) < 32:
@@ -16,7 +24,9 @@ if not DEBUG:
         )
     SECRET_KEY = raw_secret
 
-    raw_hosts = os.environ.get('DJANGO_ALLOWED_HOSTS', '')
+    raw_hosts = os.environ.get('DJANGO_ALLOWED_HOSTS')
+    if raw_hosts is None:
+        raw_hosts = os.environ.get('ALLOWED_HOSTS', '')
     ALLOWED_HOSTS = [h.strip() for h in raw_hosts.split(',') if h.strip()]
     if not ALLOWED_HOSTS or '*' in ALLOWED_HOSTS:
         raise ImproperlyConfigured(
@@ -24,7 +34,9 @@ if not DEBUG:
         )
 else:
     SECRET_KEY = raw_secret or 'dev-shoppilot-insecure-key-1234567890'
-    raw_hosts = os.environ.get('DJANGO_ALLOWED_HOSTS', '*')
+    raw_hosts = os.environ.get('DJANGO_ALLOWED_HOSTS')
+    if raw_hosts is None:
+        raw_hosts = os.environ.get('ALLOWED_HOSTS', '*')
     ALLOWED_HOSTS = [h.strip() for h in raw_hosts.split(',') if h.strip()] or ['*']
 
 INSTALLED_APPS = [
@@ -107,10 +119,19 @@ DB_HOST = os.environ.get('DB_HOST')
 if DATABASE_URL:
     parsed_db = urllib.parse.urlparse(DATABASE_URL)
     is_postgres = parsed_db.scheme in ('postgres', 'postgresql', 'pgsql')
+    db_name = parsed_db.path.lstrip('/')
+    if not is_postgres and not DEBUG and not os.environ.get('ALLOW_SQLITE_IN_PRODUCTION'):
+        raise ImproperlyConfigured(
+            f"Unsupported database scheme '{parsed_db.scheme}' in production. PostgreSQL is required."
+        )
+    if is_postgres and not db_name:
+        raise ImproperlyConfigured(
+            "DATABASE_URL must include a non-empty database name."
+        )
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql' if is_postgres else 'django.db.backends.sqlite3',
-            'NAME': parsed_db.path.lstrip('/') if is_postgres else (BASE_DIR / parsed_db.path.lstrip('/')),
+            'NAME': db_name if is_postgres else (BASE_DIR / db_name if db_name else BASE_DIR / 'db.sqlite3'),
             'USER': parsed_db.username or '',
             'PASSWORD': parsed_db.password or '',
             'HOST': parsed_db.hostname or '',
@@ -235,7 +256,11 @@ if not DEBUG:
     SECURE_CONTENT_TYPE_NOSNIFF = True
     X_FRAME_OPTIONS = 'DENY'
 
-    if os.environ.get('SECURE_PROXY_SSL_HEADER', 'True').lower() in ('true', '1', 't'):
+    behind_proxy = (
+        os.environ.get('BEHIND_REVERSE_PROXY', 'False').lower() in ('true', '1', 't')
+        or os.environ.get('SECURE_PROXY_SSL_HEADER', 'False').lower() in ('true', '1', 't')
+    )
+    if behind_proxy:
         SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
     if os.environ.get('SECURE_SSL_REDIRECT', 'False').lower() in ('true', '1', 't'):

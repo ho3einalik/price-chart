@@ -120,7 +120,7 @@ def create_shipment(store, order, tracking_number: str, carrier: str, shipping_c
     return shipment
 
 
-def update_shipment_status(shipment: Shipment, new_status: str, location: str = '', description: str = '', failed_reason: str = '') -> Shipment:
+def update_shipment_status(shipment: Shipment, new_status: str, location: str = '', description: str = '', failed_reason: str = '', source: str = TrackingEventSource.MANUAL) -> Shipment:
     """
     Updates shipment status, logs tracking event, and handles delivery / failure transitions.
     """
@@ -142,7 +142,7 @@ def update_shipment_status(shipment: Shipment, new_status: str, location: str = 
         status=new_status,
         location=location or (shipment.order.customer.city or ''),
         description=description or f"وضعیت مرسوله به {shipment.get_status_display()} تغییر یافت.",
-        source=TrackingEventSource.MANUAL,
+        source=source,
         occurred_at=timezone.now()
     )
 

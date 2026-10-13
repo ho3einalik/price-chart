@@ -68,11 +68,13 @@ class SocialService:
         return content
 
     @staticmethod
-    def publish_content(content, published_url="", user=None):
+    def publish_content(content, published_url="", external_post_id="", user=None):
         content.status = ContentStatus.PUBLISHED
         content.published_at = timezone.now()
         if published_url:
             content.published_url = published_url
+        if external_post_id:
+            content.external_post_id = external_post_id
         content.save()
         return content
 

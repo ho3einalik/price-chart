@@ -76,18 +76,55 @@ def execute_actions(rule, actions, payload, dry_run=False):
 
     return "\n".join(results)
 
+SENSITIVE_KEYS = {'password', 'token', 'secret', 'api_key', 'authorization', 'card_number', 'cvv2', 'credentials'}
+
+def sanitize_payload(payload):
+    """Sanitizes sensitive information from event payload before storing in execution logs"""
+    if not isinstance(payload, dict):
+        return payload
+
+    sanitized = {}
+    for k, v in payload.items():
+        if any(sens in k.lower() for sens in SENSITIVE_KEYS):
+            sanitized[k] = '***REDACTED***'
+        elif isinstance(v, dict):
+            sanitized[k] = sanitize_payload(v)
+        elif isinstance(v, str) and len(v) == 11 and v.startswith('09'):
+            # Mask phone numbers in payload logs
+            sanitized[k] = v[:4] + '****' + v[-3:]
+        else:
+            sanitized[k] = v
+    return sanitized
+
+
 def trigger_automation(store, trigger_event, payload):
     """Trigger all active rules matching the event for a store"""
     rules = AutomationRule.objects.filter(store=store, trigger=trigger_event, is_active=True)
     executed_count = 0
+    sanitized_data = sanitize_payload(payload)
 
     for rule in rules:
+        # Idempotency check: if payload has idempotency_key or event_id, prevent duplicate rule execution
+        event_key = payload.get('idempotency_key') or payload.get('event_id')
+        if event_key:
+            already_executed = AutomationExecutionLog.objects.filter(
+                rule=rule,
+                status=ExecutionStatus.SUCCESS,
+                event_payload__event_id=event_key
+            ).exists() or AutomationExecutionLog.objects.filter(
+                rule=rule,
+                status=ExecutionStatus.SUCCESS,
+                event_payload__idempotency_key=event_key
+            ).exists()
+            if already_executed:
+                continue
+
         matches = evaluate_conditions(rule.conditions, payload)
         if not matches:
             AutomationExecutionLog.objects.create(
                 rule=rule,
                 trigger_event=trigger_event,
-                event_payload=payload,
+                event_payload=sanitized_data,
                 status=ExecutionStatus.SKIPPED,
                 details="شرایط قانون با داده‌های رویداد مطابقت نداشت."
             )
@@ -102,7 +139,7 @@ def trigger_automation(store, trigger_event, payload):
             AutomationExecutionLog.objects.create(
                 rule=rule,
                 trigger_event=trigger_event,
-                event_payload=payload,
+                event_payload=sanitized_data,
                 status=ExecutionStatus.SUCCESS,
                 details=details
             )
@@ -111,7 +148,7 @@ def trigger_automation(store, trigger_event, payload):
             AutomationExecutionLog.objects.create(
                 rule=rule,
                 trigger_event=trigger_event,
-                event_payload=payload,
+                event_payload=sanitized_data,
                 status=ExecutionStatus.FAILED,
                 details=f"خطا در اجرای اقدامات: {str(e)}"
             )

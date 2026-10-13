@@ -25,11 +25,21 @@ from apps.social_inbox.models import ConversationThread, ChatMessage, ThreadChan
 class Command(BaseCommand):
     help = "Seeds comprehensive realistic demo data for ShopPilot (Persian e-commerce)"
 
+    def add_arguments(self, parser):
+        parser.add_argument(
+            '--allow-production',
+            action='store_true',
+            help='Explicitly allow seeding demo data in production environment',
+        )
+
     def handle(self, *args, **options):
-        if not settings.DEBUG and not os.environ.get('ALLOW_SEEDING_IN_PRODUCTION'):
-            raise CommandError("Seeding demo data is prohibited in production (DEBUG=False) unless ALLOW_SEEDING_IN_PRODUCTION is set.")
+        allow_prod = options.get('allow_production') or os.environ.get('ALLOW_SEEDING_IN_PRODUCTION')
+        if not settings.DEBUG and not allow_prod:
+            raise CommandError("Seeding demo data is prohibited in production (DEBUG=False) unless --allow-production or ALLOW_SEEDING_IN_PRODUCTION is set.")
 
         self.stdout.write("Seeding ShopPilot demo data...")
+
+        demo_password = os.environ.get('DEMO_USER_PASSWORD', 'password123')
 
         # 1. Create Demo User
         user, created = User.objects.get_or_create(
@@ -41,8 +51,9 @@ class Command(BaseCommand):
                 'is_superuser': False,
             }
         )
-        user.set_password("password123")
-        user.save()
+        if created:
+            user.set_password(demo_password)
+            user.save()
 
         # 2. Business & Store
         business, _ = Business.objects.get_or_create(

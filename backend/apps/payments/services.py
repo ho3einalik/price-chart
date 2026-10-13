@@ -12,20 +12,27 @@ def verify_payment_transaction(payment, user):
     if payment.status == PaymentVerificationStatus.VERIFIED:
         return payment
 
-    payment.status = PaymentVerificationStatus.VERIFIED
-    payment.verified_by = user
-    payment.verified_at = timezone.now()
-    payment.save()
-
-    # Recalculate order total verified payments under row lock
+    # Lock order and check total verified payments to prevent overpayment race conditions
     order = Order.objects.select_for_update().get(id=payment.order_id)
     total_verified = sum(
         p.amount for p in order.payments.filter(status=PaymentVerificationStatus.VERIFIED)
     )
 
-    if total_verified >= order.grand_total:
+    if total_verified + payment.amount > order.grand_total:
+        from rest_framework.exceptions import ValidationError
+        raise ValidationError(
+            f"تأیید این تراکنش باعث پرداخت بیش از سقف سفارش خواهد شد. مجموع تأییدشده: {total_verified}، تراکنش فعلی: {payment.amount}، مبلغ کل: {order.grand_total}"
+        )
+
+    payment.status = PaymentVerificationStatus.VERIFIED
+    payment.verified_by = user
+    payment.verified_at = timezone.now()
+    payment.save()
+
+    new_total_verified = total_verified + payment.amount
+    if new_total_verified >= order.grand_total:
         order.payment_status = PaymentStatus.PAID
-    elif total_verified > 0:
+    elif new_total_verified > 0:
         order.payment_status = PaymentStatus.PARTIALLY_PAID
     else:
         order.payment_status = PaymentStatus.PENDING

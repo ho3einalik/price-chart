@@ -92,3 +92,97 @@ class PaymentTransactionViewSet(viewsets.ModelViewSet):
             user=request.user
         )
         return Response(PaymentTransactionSerializer(rejected).data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], url_path='online-checkout')
+    def online_checkout(self, request):
+        """Initiates online payment gateway checkout (e.g. Zarinpal)"""
+        order_id = request.data.get('order_id')
+        callback_url = request.data.get('callback_url', '')
+        gateway_name = request.data.get('gateway', 'zarinpal')
+
+        store = request.store
+        try:
+            order = Order.objects.select_for_update().get(id=order_id, store=store)
+        except (Order.DoesNotExist, ValueError):
+            return Response({'error': 'سفارش یافت نشد.'}, status=status.HTTP_404_NOT_FOUND)
+
+        verified_sum = sum(
+            p.amount for p in order.payments.filter(status=PaymentVerificationStatus.VERIFIED)
+        )
+        remaining_payable = max(Decimal('0'), order.grand_total - verified_sum)
+        if remaining_payable <= 0:
+            return Response({'error': 'این سفارش قبلاً به طور کامل تسویه شده است.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from .gateways import get_payment_gateway
+        from .models import PaymentMethod
+        gateway = get_payment_gateway(gateway_name)
+        if not gateway:
+            return Response({'error': f'درگاه پرداخت {gateway_name} پشتیبانی نمی‌شود.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        desc = f"پرداخت سفارش {order.order_number} در فروشگاه {store.name}"
+        result = gateway.request_payment(
+            amount=remaining_payable,
+            callback_url=callback_url,
+            description=desc,
+            order_id=str(order.id),
+            store=store
+        )
+
+        if not result.get('success'):
+            status_code = status.HTTP_400_BAD_REQUEST if result.get('status') == 'REQUIRES_GATEWAY_CONFIG' else status.HTTP_502_BAD_GATEWAY
+            return Response(result, status=status_code)
+
+        payment = PaymentTransaction.objects.create(
+            store=store,
+            order=order,
+            method=PaymentMethod.ONLINE_GATEWAY,
+            amount=remaining_payable,
+            currency=order.currency,
+            reference_number=result.get('authority', ''),
+            status=PaymentVerificationStatus.PENDING_VERIFICATION
+        )
+
+        return Response({
+            'payment_id': str(payment.id),
+            'authority': result.get('authority'),
+            'payment_url': result.get('payment_url'),
+            'amount': remaining_payable
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], url_path='online-verify')
+    def online_verify(self, request):
+        """Verifies online payment callback with the payment gateway"""
+        authority = request.data.get('authority') or request.query_params.get('Authority')
+        gateway_name = request.data.get('gateway', 'zarinpal')
+
+        if not authority:
+            return Response({'error': 'پارامتر authority یا شناسه ارجاع الزامی است.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        store = request.store
+        payment = PaymentTransaction.objects.filter(
+            store=store,
+            reference_number=authority,
+            status=PaymentVerificationStatus.PENDING_VERIFICATION
+        ).first()
+
+        if not payment:
+            return Response({'error': 'تراکنش در انتظار برای این شناسه ارجاع یافت نشد.'}, status=status.HTTP_404_NOT_FOUND)
+
+        from .gateways import get_payment_gateway
+        gateway = get_payment_gateway(gateway_name)
+        if not gateway:
+            return Response({'error': 'درگاه پرداخت نامعتبر است.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        res = gateway.verify_payment(authority=authority, amount=payment.amount, store=store)
+        if res.success:
+            payment.tracking_code = res.tracking_code
+            payment.save(update_fields=['tracking_code'])
+            verified = verify_payment_transaction(payment=payment, user=request.user)
+            return Response({
+                'success': True,
+                'message': res.message,
+                'tracking_code': res.tracking_code,
+                'payment': PaymentTransactionSerializer(verified).data
+            }, status=status.HTTP_200_OK)
+        else:
+            return Response(res.to_dict(), status=status.HTTP_400_BAD_REQUEST)

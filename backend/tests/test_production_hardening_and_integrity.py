@@ -58,7 +58,7 @@ class TestProductionHardeningAndIntegrity:
         assert settings.tier == SubscriptionTier.FREE
 
         with patch('django.conf.settings.DEBUG', False):
-            # Attempting to upgrade to PRO without staff status
+            # 1. Attempting to upgrade to PRO without staff status
             res = self.client.post(
                 '/api/v1/features/tier/',
                 {'tier': SubscriptionTier.PRO},
@@ -68,9 +68,37 @@ class TestProductionHardeningAndIntegrity:
             assert res.status_code == status.HTTP_403_FORBIDDEN
             assert "ارتقای پلن اشتراک" in str(res.data)
 
+            # 2. Arbitrary fake reference string must still be rejected
+            res_fake = self.client.post(
+                '/api/v1/features/tier/',
+                {'tier': SubscriptionTier.PRO, 'payment_reference': 'FAKE-STRING-123'},
+                HTTP_X_STORE_ID=str(self.store.id),
+                format='json'
+            )
+            assert res_fake.status_code == status.HTTP_403_FORBIDDEN
+
             # Store tier remains FREE
             settings.refresh_from_db()
             assert settings.tier == SubscriptionTier.FREE
+
+            # 3. Legitimate paid invoice upgrades tier successfully
+            from apps.features.models import SubscriptionInvoice, InvoiceStatus
+            SubscriptionInvoice.objects.create(
+                store=self.store,
+                tier=SubscriptionTier.PRO,
+                amount=Decimal('590000'),
+                status=InvoiceStatus.PAID,
+                payment_reference='INV-PRO-VERIFIED-001'
+            )
+            res_valid = self.client.post(
+                '/api/v1/features/tier/',
+                {'tier': SubscriptionTier.PRO, 'payment_reference': 'INV-PRO-VERIFIED-001'},
+                HTTP_X_STORE_ID=str(self.store.id),
+                format='json'
+            )
+            assert res_valid.status_code == status.HTTP_200_OK
+            settings.refresh_from_db()
+            assert settings.tier == SubscriptionTier.PRO
 
     def test_payment_amount_positive_validation(self):
         """Negative and zero amounts must be rejected when creating payments."""
@@ -225,3 +253,90 @@ class TestProductionHardeningAndIntegrity:
         assert proc3.returncode != 0
         assert "ImproperlyConfigured" in proc3.stderr
         assert "Production database must be configured with PostgreSQL" in proc3.stderr
+
+    def test_integration_config_cannot_force_connected_without_health_check(self):
+        """Users cannot manually toggle integration state to CONNECTED if live health check fails."""
+        self.client.force_authenticate(user=self.owner)
+        res = self.client.post(
+            '/api/v1/features/integrations/configure/',
+            {'name': 'ai_provider', 'state': IntegrationState.CONNECTED},
+            HTTP_X_STORE_ID=str(self.store.id),
+            format='json'
+        )
+        assert res.status_code == status.HTTP_400_BAD_REQUEST
+        assert "امکان تغییر وضعیت به CONNECTED وجود ندارد" in str(res.data)
+
+        # But setting to DISABLED_BY_STORE succeeds
+        res_disabled = self.client.post(
+            '/api/v1/features/integrations/configure/',
+            {'name': 'ai_provider', 'state': IntegrationState.DISABLED_BY_STORE},
+            HTTP_X_STORE_ID=str(self.store.id),
+            format='json'
+        )
+        assert res_disabled.status_code == status.HTTP_200_OK
+
+    def test_zarinpal_gateway_requires_config_when_unconfigured(self):
+        """ZarinpalGatewayAdapter returns REQUIRES_GATEWAY_CONFIG when merchant ID is missing."""
+        from apps.payments.gateways import ZarinpalGatewayAdapter
+        adapter = ZarinpalGatewayAdapter()
+        with patch.dict('os.environ', {}, clear=True):
+            res = adapter.request_payment(
+                amount=Decimal('500000'),
+                callback_url='https://app.shoppilot.ir/verify',
+                description='Order test',
+                order_id='ORD-001',
+                store=self.store
+            )
+            assert res['success'] is False
+            assert res['status'] == 'REQUIRES_GATEWAY_CONFIG'
+
+            verify_res = adapter.verify_payment(authority='12345', amount=Decimal('500000'), store=self.store)
+            assert verify_res.success is False
+            assert verify_res.status == 'REQUIRES_GATEWAY_CONFIG'
+
+    def test_loyalty_points_ledger_and_anti_self_referral(self):
+        """Verify loyalty ledger points tracking and anti-self-referral validation."""
+        from apps.marketing.models import CustomerLoyaltyAccount, LoyaltyPointsLedger, LoyaltyActionType, CustomerReferral
+        from django.core.exceptions import ValidationError
+
+        account = CustomerLoyaltyAccount.objects.create(
+            store=self.store,
+            customer=self.customer,
+            points_balance=100
+        )
+        entry = LoyaltyPointsLedger.objects.create(
+            store=self.store,
+            account=account,
+            points_delta=50,
+            action_type=LoyaltyActionType.PURCHASE,
+            note="Test purchase bonus"
+        )
+        assert entry.points_delta == 50
+        assert entry.action_type == LoyaltyActionType.PURCHASE
+
+        # Self-referral validation check
+        referral = CustomerReferral(
+            store=self.store,
+            referrer=self.customer,
+            referee_phone=self.customer.phone_number,
+            referral_code='SELF-CODE'
+        )
+        with pytest.raises(ValidationError):
+            referral.clean()
+
+    def test_automation_payload_sanitization(self):
+        """Verify that automation event payloads are sanitized of sensitive keys before logging."""
+        from apps.automation.services import sanitize_payload
+        raw = {
+            'order_id': 'ORD-123',
+            'customer_phone': '09121112233',
+            'password': 'SuperSecretPassword',
+            'api_key': 'key_1234567890',
+            'card_number': '6037991122334455'
+        }
+        sanitized = sanitize_payload(raw)
+        assert sanitized['order_id'] == 'ORD-123'
+        assert sanitized['password'] == '***REDACTED***'
+        assert sanitized['api_key'] == '***REDACTED***'
+        assert sanitized['card_number'] == '***REDACTED***'
+        assert sanitized['customer_phone'] == '0912****233'

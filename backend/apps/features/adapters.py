@@ -150,7 +150,7 @@ class AIProviderIntegrationAdapter(BaseIntegrationAdapter):
                 'source': 'heuristic_fallback'
             }
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"temperature": 0.7, "maxOutputTokens": 800}
@@ -159,7 +159,10 @@ class AIProviderIntegrationAdapter(BaseIntegrationAdapter):
             req = urllib.request.Request(
                 url,
                 data=json.dumps(payload).encode('utf-8'),
-                headers={'Content-Type': 'application/json'},
+                headers={
+                    'Content-Type': 'application/json',
+                    'x-goog-api-key': api_key
+                },
                 method='POST'
             )
             with urllib.request.urlopen(req, timeout=12) as response:
@@ -268,9 +271,10 @@ class SMSGatewayIntegrationAdapter(BaseIntegrationAdapter):
                 if response.status == 200:
                     body = json.loads(response.read().decode('utf-8'))
                     return {
-                        'status': 'SENT',
+                        'status': 'ACCEPTED',
                         'recipient': to,
-                        'message_id': body.get('entries', [{}])[0].get('messageid', 'kavenegar_ack')
+                        'message_id': str(body.get('entries', [{}])[0].get('messageid', 'kavenegar_ack')),
+                        'note': 'پیامک توسط درگاه پیامکی پذیرفته شد.'
                     }
                 else:
                     return {

@@ -307,6 +307,14 @@ class TestFeatureModularityAndIsolation:
         assert res_core_toggle.status_code == status.HTTP_400_BAD_REQUEST
 
         # 5. Tier update endpoint (with verified invoice reference)
+        from apps.features.models import SubscriptionInvoice, InvoiceStatus
+        SubscriptionInvoice.objects.create(
+            store=store,
+            tier=SubscriptionTier.ENTERPRISE,
+            amount=Decimal('1490000'),
+            status=InvoiceStatus.PAID,
+            payment_reference='INV-SUB-PAID-001'
+        )
         res_tier = owner_client.post('/api/v1/features/tier/', {
             'tier': SubscriptionTier.ENTERPRISE,
             'payment_reference': 'INV-SUB-PAID-001'

@@ -182,6 +182,7 @@ class SocialContent(TenantScopedModel):
     scheduled_at = models.DateTimeField(null=True, blank=True, db_index=True, verbose_name="زمان مقرر انتشار")
     published_at = models.DateTimeField(null=True, blank=True, verbose_name="زمان واقعی انتشار")
     published_url = models.CharField(max_length=500, blank=True, verbose_name="لینک مستقیم پست منتشر شده")
+    external_post_id = models.CharField(max_length=150, blank=True, verbose_name="شناسه پست در پلتفرم خارجی")
     proof_url = models.CharField(max_length=500, blank=True, verbose_name="لینک مدرک انتشار")
     proof_image_url = models.CharField(max_length=500, blank=True, verbose_name="تصویر اسکرین‌شات مدرک انتشار")
     approved_by = models.ForeignKey(
