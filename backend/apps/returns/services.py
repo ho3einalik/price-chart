@@ -100,6 +100,28 @@ def create_return_request(order, items_data, customer_notes='', user=None):
         target_id=str(rma.id),
         changes={'rma_number': rma.rma_number, 'order': order.order_number, 'refund_amount': str(total_refund)}
     )
+
+    def _dispatch_return_requested():
+        try:
+            from apps.automation.services import trigger_automation
+            from apps.automation.models import TriggerEvent
+            trigger_automation(
+                store=order.store,
+                trigger_event=TriggerEvent.RETURN_REQUESTED,
+                payload={
+                    'rma_id': str(rma.id),
+                    'rma_number': rma.rma_number,
+                    'order_number': order.order_number,
+                    'customer_name': order.customer.full_name,
+                    'customer_phone': order.customer.phone_number,
+                    'refund_amount': float(rma.refund_amount),
+                    'idempotency_key': f"return_requested_{rma.id}"
+                }
+            )
+        except Exception:
+            pass
+
+    transaction.on_commit(_dispatch_return_requested)
     return rma
 
 @transaction.atomic
@@ -132,7 +154,8 @@ def inspect_and_process_return(rma, inspection_items_data, warehouse, user=None,
     rma = ReturnRequest.objects.select_for_update().get(id=rma.id)
     if rma.status in [ReturnStatus.COMPLETED, ReturnStatus.REJECTED]:
         raise ValidationError(f"این مرجوعی قبلاً نهایی شده است (وضعیت: {rma.get_status_display()})")
-
+    if rma.status != ReturnStatus.APPROVED:
+        raise ValidationError(f"تنها درخواست‌های مرجوعی تأییدشده توسط مدیر قابل بازرسی و فرآوری هستند. وضعیت فعلی: {rma.get_status_display()}")
 
     items_dict = {str(item.id): item for item in rma.items.select_for_update()}
 
@@ -182,7 +205,7 @@ def inspect_and_process_return(rma, inspection_items_data, warehouse, user=None,
     if rma.refund_amount > 0:
         try:
             from apps.finance.models import RefundRecord, RefundStatus as FinRefundStatus
-            fin_status = FinRefundStatus.REFUNDED if refund_status == RefundStatus.REFUNDED else FinRefundStatus.PENDING
+            fin_status = FinRefundStatus.COMPLETED if refund_status == RefundStatus.REFUNDED else FinRefundStatus.PENDING
             RefundRecord.objects.get_or_create(
                 store=rma.store,
                 order=rma.order,

@@ -9,6 +9,13 @@ class CategorySerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'slug', 'parent', 'created_at']
         read_only_fields = ['id', 'created_at']
 
+    def validate_parent(self, value):
+        if value:
+            store = getattr(self.context.get('request'), 'store', None)
+            if store and value.store_id != store.id:
+                raise serializers.ValidationError("دسته‌بندی والد باید متعلق به همین فروشگاه باشد.")
+        return value
+
     def create(self, validated_data):
         store = self.context['request'].store
         if not validated_data.get('slug'):
@@ -65,6 +72,13 @@ class ProductCreateUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
         fields = ['id', 'name', 'slug', 'category', 'brand', 'description', 'status', 'variants_data']
+
+    def validate_category(self, value):
+        if value:
+            store = getattr(self.context.get('request'), 'store', None)
+            if store and value.store_id != store.id:
+                raise serializers.ValidationError("دسته‌بندی انتخابی باید متعلق به همین فروشگاه باشد.")
+        return value
 
     @transaction.atomic
     def create(self, validated_data):

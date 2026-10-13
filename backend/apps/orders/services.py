@@ -18,6 +18,13 @@ def generate_order_number(store):
 def create_order(store, customer_data, items_data, warehouse, channel=OrderChannel.MANUAL,
                  shipping_cost=Decimal('0'), discount_amount=Decimal('0'), notes='', user=None):
     """Creates an order, captures cost snapshots, and atomically reserves inventory"""
+    if not items_data:
+        raise ValueError("سفارش باید حداقل دارای یک ردیف کالا باشد.")
+    if shipping_cost < Decimal('0'):
+        raise ValueError("هزینه ارسال نمی‌تواند منفی باشد.")
+    if discount_amount < Decimal('0'):
+        raise ValueError("مبلغ تخفیف نمی‌تواند منفی باشد.")
+
     phone = customer_data.get('phone_number') or customer_data.get('phone') or '09000000000'
     name = customer_data.get('full_name') or customer_data.get('name') or 'مشتری بدون نام'
     customer, _ = Customer.objects.get_or_create(
@@ -54,7 +61,11 @@ def create_order(store, customer_data, items_data, warehouse, channel=OrderChann
     for item in items_data:
         variant_id = item.get('variant_id')
         qty = int(item.get('quantity', 1))
+        if qty <= 0:
+            raise ValueError("تعداد کالا باید بزرگتر از صفر باشد.")
         unit_price = Decimal(str(item.get('unit_price', 0)))
+        if unit_price < Decimal('0'):
+            raise ValueError("قیمت واحد نمی‌تواند منفی باشد.")
 
         variant = ProductVariant.objects.select_related('product').get(id=variant_id, store=store)
         if unit_price <= 0:
@@ -97,6 +108,28 @@ def create_order(store, customer_data, items_data, warehouse, channel=OrderChann
         target_id=str(order.id),
         changes={'order_number': order.order_number, 'grand_total': str(order.grand_total)}
     )
+
+    def _dispatch_order_created():
+        try:
+            from apps.automation.services import trigger_automation
+            from apps.automation.models import TriggerEvent
+            trigger_automation(
+                store=store,
+                trigger_event=TriggerEvent.ORDER_CREATED,
+                payload={
+                    'order_id': str(order.id),
+                    'order_number': order.order_number,
+                    'customer_name': customer.full_name,
+                    'customer_phone': customer.phone_number,
+                    'grand_total': float(order.grand_total),
+                    'items_count': len(items_data),
+                    'idempotency_key': f"order_created_{order.id}"
+                }
+            )
+        except Exception:
+            pass
+
+    transaction.on_commit(_dispatch_order_created)
     return order
 
 @transaction.atomic
@@ -135,6 +168,27 @@ def cancel_order(order, reason='', user=None):
         target_id=str(order.id),
         changes={'old_status': old_status, 'new_status': OrderStatus.CANCELLED, 'reason': reason}
     )
+
+    def _dispatch_order_cancelled():
+        try:
+            from apps.automation.services import trigger_automation
+            from apps.automation.models import TriggerEvent
+            trigger_automation(
+                store=order.store,
+                trigger_event=TriggerEvent.ORDER_CANCELLED,
+                payload={
+                    'order_id': str(order.id),
+                    'order_number': order.order_number,
+                    'customer_name': order.customer.full_name,
+                    'customer_phone': order.customer.phone_number,
+                    'grand_total': float(order.grand_total),
+                    'idempotency_key': f"order_cancelled_{order.id}"
+                }
+            )
+        except Exception:
+            pass
+
+    transaction.on_commit(_dispatch_order_cancelled)
     return order
 
 @transaction.atomic
@@ -189,6 +243,27 @@ def fulfill_order(order, tracking_number='', shipping_cost=None, user=None):
         target_id=str(order.id),
         changes={'tracking_number': shipment.tracking_number}
     )
+
+    def _dispatch_order_fulfilled():
+        try:
+            from apps.automation.services import trigger_automation
+            from apps.automation.models import TriggerEvent
+            trigger_automation(
+                store=order.store,
+                trigger_event=TriggerEvent.ORDER_FULFILLED,
+                payload={
+                    'order_id': str(order.id),
+                    'order_number': order.order_number,
+                    'customer_name': order.customer.full_name,
+                    'customer_phone': order.customer.phone_number,
+                    'tracking_number': shipment.tracking_number,
+                    'idempotency_key': f"order_fulfilled_{order.id}"
+                }
+            )
+        except Exception:
+            pass
+
+    transaction.on_commit(_dispatch_order_fulfilled)
     return order, shipment
 
 def import_orders_from_csv(store, file_content, user=None):

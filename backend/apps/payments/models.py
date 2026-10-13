@@ -22,6 +22,7 @@ class PaymentTransaction(TenantScopedModel):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='payments', verbose_name="سفارش")
     method = models.CharField(max_length=30, choices=PaymentMethod.choices, default=PaymentMethod.CARD_TO_CARD, verbose_name="روش پرداخت")
     amount = models.DecimalField(max_digits=14, decimal_places=0, verbose_name="مبلغ تراکنش")
+    refunded_amount = models.DecimalField(max_digits=14, decimal_places=0, default=Decimal('0'), verbose_name="مبلغ مسترد شده")
     currency = models.CharField(max_length=10, default='IRT', verbose_name="واحد پول")
     status = models.CharField(max_length=30, choices=PaymentVerificationStatus.choices, default=PaymentVerificationStatus.PENDING_VERIFICATION, verbose_name="وضعیت تأیید")
     

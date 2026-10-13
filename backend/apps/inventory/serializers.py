@@ -47,3 +47,10 @@ class StockAdjustmentSerializer(serializers.Serializer):
     variant_id = serializers.UUIDField()
     new_on_hand = serializers.IntegerField(min_value=0)
     reason = serializers.CharField(max_length=255, required=False, allow_blank=True)
+
+class StockTransferSerializer(serializers.Serializer):
+    source_warehouse_id = serializers.UUIDField()
+    dest_warehouse_id = serializers.UUIDField()
+    variant_id = serializers.UUIDField()
+    quantity = serializers.IntegerField(min_value=1)
+    reason = serializers.CharField(max_length=255, required=False, allow_blank=True)

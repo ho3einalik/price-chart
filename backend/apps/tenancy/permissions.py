@@ -135,7 +135,12 @@ class IsStoreMemberPermission(permissions.BasePermission):
         membership = getattr(request, 'membership', None)
         if not (store and membership):
             return False
-        return bool(membership.is_active and membership.status == MembershipStatus.ACTIVE and store.is_active)
+        if not (membership.is_active and membership.status == MembershipStatus.ACTIVE and store.is_active):
+            return False
+        if request.method not in permissions.SAFE_METHODS and membership.role == Role.READ_ONLY:
+            self.message = "کاربر با نقش فقط‌خواندنی (READ_ONLY) مجاز به ثبت، تغییر یا حذف اطلاعات نیست."
+            return False
+        return True
 
 class IsStoreAdminOrOwnerPermission(permissions.BasePermission):
     """Requires user to be active OWNER, ADMIN, or BUSINESS_MANAGER of the active store (or platform staff)"""

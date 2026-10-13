@@ -2,7 +2,7 @@ from rest_framework import viewsets, filters, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
-from apps.tenancy.permissions import IsStoreMemberPermission, TenantFilterBackend
+from apps.tenancy.permissions import IsStoreMemberPermission, TenantFilterBackend, Role, user_has_store_permission
 from apps.inventory.models import Warehouse
 from .models import Order, Customer
 from .serializers import (
@@ -70,6 +70,10 @@ class OrderViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
+        membership = getattr(request, 'membership', None)
+        if not (request.user.is_superuser or request.user.is_staff or (membership and (membership.role in [Role.OWNER, Role.ADMIN, Role.BUSINESS_MANAGER, Role.OPS_MANAGER] or user_has_store_permission(membership, 'orders.cancel')))):
+            return Response({'error': 'شما مجوز لغو سفارش را ندارید.'}, status=status.HTTP_403_FORBIDDEN)
+
         order = self.get_object()
         serializer = OrderCancelSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -85,6 +89,10 @@ class OrderViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def fulfill(self, request, pk=None):
+        membership = getattr(request, 'membership', None)
+        if not (request.user.is_superuser or request.user.is_staff or (membership and (membership.role in [Role.OWNER, Role.ADMIN, Role.OPS_MANAGER, Role.FULFILLMENT_STAFF] or user_has_store_permission(membership, 'fulfillment.manage') or user_has_store_permission(membership, 'fulfillment.pack')))):
+            return Response({'error': 'شما مجوز ارسال و بسته‌بندی سفارش را ندارید.'}, status=status.HTTP_403_FORBIDDEN)
+
         order = self.get_object()
         serializer = OrderFulfillSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

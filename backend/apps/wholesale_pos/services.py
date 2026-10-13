@@ -146,7 +146,7 @@ def pos_quick_checkout(store, session_id, items_data, customer_phone="0900000000
         user=user,
         action="POS_QUICK_SALE",
         target_type="Order",
-        target_id=order.id,
+        target_id=str(order.id),
         changes={
             'order_number': order.order_number,
             'grand_total': str(total_amount),
@@ -164,10 +164,11 @@ def convert_proforma_to_order(proforma, user=None):
     Convert an accepted B2B proforma invoice into a confirmed order,
     reserving warehouse stock and updating client accounts receivable ledger.
     """
+    proforma = ProformaInvoice.objects.select_for_update().get(id=proforma.id)
     if proforma.status == ProformaStatus.CONVERTED:
         raise ValidationError("این پیش‌فاکتور قبلاً به سفارش نهایی تبدیل شده است.")
 
-    client = proforma.client
+    client = B2BClientProfile.objects.select_for_update().get(id=proforma.client_id)
     store = proforma.store
 
     # Credit limit check
@@ -256,7 +257,7 @@ def convert_proforma_to_order(proforma, user=None):
         user=user,
         action="PROFORMA_CONVERTED_TO_ORDER",
         target_type="ProformaInvoice",
-        target_id=proforma.id,
+        target_id=str(proforma.id),
         changes={
             'order_number': order.order_number,
             'client': client.company_name,

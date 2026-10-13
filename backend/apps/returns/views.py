@@ -11,7 +11,7 @@ from .services import (
 )
 from apps.orders.models import Order, OrderItem
 from apps.inventory.models import Warehouse
-from apps.tenancy.permissions import IsStoreMemberPermission
+from apps.tenancy.permissions import IsStoreMemberPermission, Role, user_has_store_permission
 
 class ReturnRequestViewSet(viewsets.ModelViewSet):
     serializer_class = ReturnRequestSerializer
@@ -67,6 +67,10 @@ class ReturnRequestViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='approve')
     def approve(self, request, pk=None):
+        membership = getattr(request, 'membership', None)
+        if not (request.user.is_superuser or request.user.is_staff or (membership and (membership.role in [Role.OWNER, Role.ADMIN, Role.BUSINESS_MANAGER, Role.OPS_MANAGER] or user_has_store_permission(membership, 'returns.approve')))):
+            return Response({'error': 'شما مجوز تأیید درخواست‌های مرجوعی را ندارید.'}, status=status.HTTP_403_FORBIDDEN)
+
         rma = self.get_object()
         staff_notes = request.data.get('staff_notes', '')
         try:
@@ -77,6 +81,10 @@ class ReturnRequestViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='inspect-and-process')
     def inspect_and_process(self, request, pk=None):
+        membership = getattr(request, 'membership', None)
+        if not (request.user.is_superuser or request.user.is_staff or (membership and (membership.role in [Role.OWNER, Role.ADMIN, Role.BUSINESS_MANAGER, Role.OPS_MANAGER, Role.INVENTORY_MANAGER] or user_has_store_permission(membership, 'returns.process')))):
+            return Response({'error': 'شما مجوز بازرسی و پردازش انبارداری مرجوعی را ندارید.'}, status=status.HTTP_403_FORBIDDEN)
+
         rma = self.get_object()
         data = request.data
         inspection_items = data.get('inspection_items', [])

@@ -71,11 +71,22 @@ class SocialService:
     def publish_content(content, published_url="", external_post_id="", user=None):
         content.status = ContentStatus.PUBLISHED
         content.published_at = timezone.now()
+        if user:
+            content.approved_by = user
         if published_url:
             content.published_url = published_url
         if external_post_id:
             content.external_post_id = external_post_id
         content.save()
+
+        if user:
+            user_name = getattr(user, 'full_name', '') or getattr(user, 'email', str(user))
+            ContentApprovalLog.objects.create(
+                content=content,
+                reviewer=user,
+                action=ApprovalAction.APPROVED,
+                feedback=f"محتوا توسط {user_name} به عنوان منتشرشده ثبت گردید."
+            )
         return content
 
     @staticmethod

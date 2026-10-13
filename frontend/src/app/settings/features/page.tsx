@@ -99,6 +99,28 @@ export default function FeaturesSettingsPage() {
 
   useEffect(() => {
     fetchData();
+
+    // Check if redirected back from payment gateway
+    if (typeof window !== 'undefined') {
+      const queryParams = new URLSearchParams(window.location.search);
+      const authority = queryParams.get('Authority') || queryParams.get('authority');
+      if (authority) {
+        api.verifySubscriptionInvoice({ authority })
+          .then((res: any) => {
+            setFeedback({
+              type: 'success',
+              message: res.message || 'پرداخت اشتراک با موفقیت تأیید شد و پلن فروشگاه ارتقا یافت.'
+            });
+            fetchData();
+          })
+          .catch((err: any) => {
+            setFeedback({
+              type: 'error',
+              message: err.message || 'خطا در تأیید پرداخت درگاه اشتراک'
+            });
+          });
+      }
+    }
   }, []);
 
   const handleToggleClick = (feature: FeatureItem) => {
@@ -147,9 +169,31 @@ export default function FeaturesSettingsPage() {
   const handleTierChange = async (tier: string) => {
     try {
       setActionLoading(true);
-      await api.updateSubscriptionTier(tier);
-      setFeedback({ type: 'success', message: `پلن اشتراک فروشگاه به ${tier} تغییر یافت.` });
-      await fetchData();
+      // Try direct tier update (works for downgrades, platform staff, or DEBUG mode)
+      try {
+        await api.updateSubscriptionTier(tier);
+        setFeedback({ type: 'success', message: `پلن اشتراک فروشگاه به ${tier} تغییر یافت.` });
+        await fetchData();
+        return;
+      } catch (directErr: any) {
+        // If direct change is forbidden due to invoice requirement, initiate checkout invoice
+        const invoice = await api.createSubscriptionInvoice({ tier, billing_cycle: 'MONTHLY' });
+        const currentUrl = typeof window !== 'undefined' ? window.location.href.split('?')[0] : '';
+        const checkout = await api.checkoutSubscriptionInvoice(invoice.id, {
+          callback_url: currentUrl,
+        });
+
+        if (checkout.payment_url) {
+          window.location.href = checkout.payment_url;
+          return;
+        } else {
+          setFeedback({
+            type: 'warning',
+            message: `فاکتور ارتقای پلن به شماره ${invoice.invoice_number || invoice.id} صادر گردید.`
+          });
+          await fetchData();
+        }
+      }
     } catch (err: any) {
       setFeedback({ type: 'error', message: err.message || 'خطا در ارتقای پلن اشتراک' });
     } finally {

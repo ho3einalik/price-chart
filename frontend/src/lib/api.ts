@@ -218,6 +218,19 @@ class ApiClient {
     });
   }
 
+  async transferStock(data: {
+    source_warehouse_id: string;
+    dest_warehouse_id: string;
+    variant_id: string;
+    quantity: number;
+    reason?: string;
+  }) {
+    return this.request<any>('/inventory/transfers/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   async getReorderSuggestions() {
     return this.request<any[]>('/inventory/reorder-suggestions/');
   }
@@ -590,6 +603,45 @@ class ApiClient {
     return this.request<any>('/features/integrations/configure/', {
       method: 'POST',
       body: JSON.stringify({ name, state, credentials: credentials || {} }),
+    });
+  }
+
+  // Subscription Invoices & Checkout
+  async getSubscriptionInvoices() {
+    return this.request<any[]>('/features/invoices/');
+  }
+
+  async createSubscriptionInvoice(data: { tier: string; billing_cycle?: 'MONTHLY' | 'ANNUAL' }) {
+    return this.request<any>('/features/invoices/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async checkoutSubscriptionInvoice(invoiceId: string, data?: { callback_url?: string; gateway?: string }) {
+    return this.request<{
+      success: boolean;
+      invoice_id: string;
+      authority?: string;
+      payment_url?: string;
+      amount: string | number;
+    }>(`/features/invoices/${invoiceId}/checkout/`, {
+      method: 'POST',
+      body: JSON.stringify(data || {}),
+    });
+  }
+
+  async verifySubscriptionInvoice(data: { authority: string; gateway?: string }) {
+    return this.request<any>('/features/invoices/verify/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async manualApproveSubscriptionInvoice(invoiceId: string, data: { reason: string; tracking_code?: string }) {
+    return this.request<any>(`/features/invoices/${invoiceId}/manual-approve/`, {
+      method: 'POST',
+      body: JSON.stringify(data),
     });
   }
 

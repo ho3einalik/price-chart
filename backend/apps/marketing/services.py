@@ -1,4 +1,14 @@
-from .models import ProductRecommendation
+from .models import ProductRecommendation, LoyaltyTier
+
+def calculate_loyalty_tier(lifetime_points: int) -> str:
+    """Calculates customer loyalty tier based on cumulative lifetime points earned."""
+    if lifetime_points >= 5000:
+        return LoyaltyTier.PLATINUM
+    elif lifetime_points >= 2000:
+        return LoyaltyTier.GOLD
+    elif lifetime_points >= 500:
+        return LoyaltyTier.SILVER
+    return LoyaltyTier.BRONZE
 
 def evaluate_product_recommendations(store, source_variant_id):
     qs = ProductRecommendation.objects.filter(
@@ -18,3 +28,4 @@ def evaluate_product_recommendations(store, source_variant_id):
             'discount_incentive_percent': rec.discount_incentive_percent
         })
     return results
+

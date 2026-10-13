@@ -12,13 +12,13 @@ class PaymentTransactionSerializer(serializers.ModelSerializer):
         model = PaymentTransaction
         fields = [
             'id', 'order', 'order_number', 'customer_name',
-            'method', 'method_display', 'amount', 'currency',
+            'method', 'method_display', 'amount', 'refunded_amount', 'currency',
             'status', 'status_display', 'reference_number',
             'tracking_code', 'payer_card_mask', 'receipt_image_url',
             'verified_by_name', 'verified_at', 'rejection_reason',
             'created_at'
         ]
-        read_only_fields = ['id', 'order_number', 'customer_name', 'method_display', 'status_display', 'verified_by_name', 'verified_at', 'created_at']
+        read_only_fields = ['id', 'order_number', 'customer_name', 'method_display', 'status_display', 'verified_by_name', 'verified_at', 'refunded_amount', 'created_at']
 
 from decimal import Decimal
 

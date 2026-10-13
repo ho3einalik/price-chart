@@ -46,6 +46,29 @@ def verify_payment_transaction(payment, user):
         target_id=str(payment.id),
         changes={'order_number': order.order_number, 'amount': str(payment.amount), 'order_payment_status': order.payment_status}
     )
+
+    if order.payment_status == PaymentStatus.PAID:
+        def _dispatch_order_paid():
+            try:
+                from apps.automation.services import trigger_automation
+                from apps.automation.models import TriggerEvent
+                trigger_automation(
+                    store=payment.store,
+                    trigger_event=TriggerEvent.ORDER_PAID,
+                    payload={
+                        'order_id': str(order.id),
+                        'order_number': order.order_number,
+                        'customer_name': order.customer.full_name,
+                        'customer_phone': order.customer.phone_number,
+                        'amount': float(payment.amount),
+                        'idempotency_key': f"order_paid_{order.id}"
+                    }
+                )
+            except Exception:
+                pass
+
+        transaction.on_commit(_dispatch_order_paid)
+
     return payment
 
 @transaction.atomic
@@ -87,36 +110,48 @@ def process_payment_refund(payment, amount=None, reason="", user=None):
     """
     Safely and idempotently refunds a verified payment transaction.
     Pessimistically locks PaymentTransaction and Order to prevent over-refunds.
+    Supports partial and cumulative refunds.
     """
     from rest_framework.exceptions import ValidationError
     payment = PaymentTransaction.objects.select_for_update().get(id=payment.id)
-    if payment.status != PaymentVerificationStatus.VERIFIED:
+    if payment.status not in [PaymentVerificationStatus.VERIFIED, PaymentVerificationStatus.REFUNDED]:
         raise ValidationError("تنها تراکنش‌های تأییدشده قابل استرداد (ریفاند) هستند.")
 
     order = Order.objects.select_for_update().get(id=payment.order_id)
-    refund_amount = Decimal(str(amount)) if amount is not None else payment.amount
+    curr_refunded = getattr(payment, 'refunded_amount', Decimal('0')) or Decimal('0')
+    remaining_refundable = payment.amount - curr_refunded
+
+    if remaining_refundable <= Decimal('0'):
+        raise ValidationError("این تراکنش قبلاً به طور کامل استرداد شده است.")
+
+    refund_amount = Decimal(str(amount)) if amount is not None else remaining_refundable
 
     if refund_amount <= 0:
         raise ValidationError("مبلغ استرداد باید بزرگتر از صفر باشد.")
 
-    if refund_amount > payment.amount:
+    if refund_amount > remaining_refundable:
         raise ValidationError(
-            f"مبلغ درخواستی برای استرداد ({refund_amount}) نمی‌تواند از مبلغ تراکنش ({payment.amount}) بیشتر باشد."
+            f"مبلغ درخواستی برای استرداد ({refund_amount}) نمی‌تواند از مانده قابل استرداد تراکنش ({remaining_refundable}) بیشتر باشد."
         )
 
-    # Calculate remaining verified across order excluding this one
-    remaining_verified = sum(
-        p.amount for p in order.payments.filter(status=PaymentVerificationStatus.VERIFIED).exclude(id=payment.id)
+    payment.refunded_amount = curr_refunded + refund_amount
+    if payment.refunded_amount >= payment.amount:
+        payment.status = PaymentVerificationStatus.REFUNDED
+
+    payment.rejection_reason = f"مسترد شده: {reason} (مبلغ استرداد: {refund_amount})" if reason else f"مسترد شده (مبلغ: {refund_amount})"
+    payment.save(update_fields=['status', 'refunded_amount', 'rejection_reason', 'updated_at'])
+
+    # Recalculate net verified paid across all payments for order
+    all_order_payments = order.payments.all()
+    net_verified = sum(
+        max(Decimal('0'), p.amount - (getattr(p, 'refunded_amount', Decimal('0')) or Decimal('0')))
+        for p in all_order_payments
+        if p.status in [PaymentVerificationStatus.VERIFIED, PaymentVerificationStatus.REFUNDED]
     )
 
-    payment.status = PaymentVerificationStatus.REFUNDED
-    payment.rejection_reason = f"مسترد شده: {reason}" if reason else "مسترد شده توسط کاربر"
-    payment.save(update_fields=['status', 'rejection_reason', 'updated_at'])
-
-    # Recalculate order payment status
-    if remaining_verified == 0:
+    if net_verified == 0:
         order.payment_status = PaymentStatus.REFUNDED
-    elif remaining_verified < order.grand_total:
+    elif net_verified < order.grand_total:
         order.payment_status = PaymentStatus.PARTIALLY_PAID
     else:
         order.payment_status = PaymentStatus.PAID

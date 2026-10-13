@@ -217,19 +217,29 @@ class PaymentTransactionViewSet(viewsets.ModelViewSet):
             or request.query_params.get('Authority')
             or request.query_params.get('authority')
         )
+        status_param = (
+            request.data.get('Status')
+            or request.query_params.get('Status')
+            or request.data.get('status')
+            or request.query_params.get('status')
+        )
         gateway_name = request.data.get('gateway', 'zarinpal')
 
         if not authority:
             return Response({'error': 'پارامتر authority یا شناسه ارجاع الزامی است.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        store = request.store
+        # Lookup payment primarily by authority / reference_number
         payment = PaymentTransaction.objects.filter(
-            store=store,
             reference_number=authority
-        ).first()
+        ).select_related('store', 'order').first()
 
         if not payment:
             return Response({'error': 'تراکنش برای این شناسه ارجاع یافت نشد.'}, status=status.HTTP_404_NOT_FOUND)
+
+        store = payment.store
+        req_store = getattr(request, 'store', None)
+        if req_store and req_store.id != store.id and not (request.user and (request.user.is_superuser or request.user.is_staff)):
+            return Response({'error': 'عدم تطابق فروشگاه تراکنش با درخواست.'}, status=status.HTTP_403_FORBIDDEN)
 
         if payment.status == PaymentVerificationStatus.VERIFIED:
             return Response({
@@ -238,6 +248,20 @@ class PaymentTransactionViewSet(viewsets.ModelViewSet):
                 'tracking_code': payment.tracking_code,
                 'payment': PaymentTransactionSerializer(payment).data
             }, status=status.HTTP_200_OK)
+
+        if status_param and str(status_param).upper() in ['NOK', 'CANCELLED', 'CANCELED']:
+            with transaction.atomic():
+                p = PaymentTransaction.objects.select_for_update().get(id=payment.id)
+                if p.status != PaymentVerificationStatus.VERIFIED:
+                    p.rejection_reason = "تراکنش توسط کاربر در صفحه درگاه لغو شد."
+                    p.status = PaymentVerificationStatus.REJECTED
+                    p.save(update_fields=['status', 'rejection_reason', 'updated_at'])
+            return Response({
+                'success': False,
+                'status': 'CANCELLED_BY_USER',
+                'message': 'پرداخت توسط کاربر لغو شد.',
+                'payment': PaymentTransactionSerializer(payment).data
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         from .gateways import get_payment_gateway
         gateway = get_payment_gateway(gateway_name)
@@ -254,9 +278,12 @@ class PaymentTransactionViewSet(viewsets.ModelViewSet):
         if res.success:
             with transaction.atomic():
                 p = PaymentTransaction.objects.select_for_update().get(id=payment.id)
-                p.tracking_code = res.tracking_code
-                p.save(update_fields=['tracking_code'])
-                verified = verify_payment_transaction(payment=p, user=request.user if request.user.is_authenticated else None)
+                if p.status != PaymentVerificationStatus.VERIFIED:
+                    p.tracking_code = res.tracking_code
+                    p.save(update_fields=['tracking_code'])
+                    verified = verify_payment_transaction(payment=p, user=request.user if request.user.is_authenticated else None)
+                else:
+                    verified = p
 
             return Response({
                 'success': True,
@@ -265,5 +292,13 @@ class PaymentTransactionViewSet(viewsets.ModelViewSet):
                 'payment': PaymentTransactionSerializer(verified).data
             }, status=status.HTTP_200_OK)
         else:
+            # If communication error/timeout, do not permanently reject; keep in PENDING_VERIFICATION for retry/reconciliation
+            if res.status != 'COMMUNICATION_ERROR':
+                with transaction.atomic():
+                    p = PaymentTransaction.objects.select_for_update().get(id=payment.id)
+                    if p.status != PaymentVerificationStatus.VERIFIED:
+                        p.status = PaymentVerificationStatus.REJECTED
+                        p.rejection_reason = res.message
+                        p.save(update_fields=['status', 'rejection_reason', 'updated_at'])
             return Response(res.to_dict(), status=status.HTTP_400_BAD_REQUEST)
 
