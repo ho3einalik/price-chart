@@ -19,7 +19,7 @@ from apps.automation.models import AutomationRule, TriggerEvent
 from apps.crm.services import recalculate_all_store_customers
 import os
 from django.conf import settings
-from django.core.exceptions import CommandError
+from django.core.management.base import BaseCommand, CommandError
 from apps.social_inbox.models import ConversationThread, ChatMessage, ThreadChannel, ThreadStatus, SenderType
 
 class Command(BaseCommand):
