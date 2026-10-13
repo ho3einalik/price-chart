@@ -44,6 +44,15 @@ class StoreViewSet(viewsets.ModelViewSet):
         elif business.owner != self.request.user:
             raise PermissionDenied("شما مجاز به ایجاد فروشگاه برای این کسب‌وکار نیستید.")
 
+        existing_store = Store.objects.filter(
+            memberships__user=self.request.user,
+            memberships__role=Role.OWNER,
+            is_active=True
+        ).first()
+        if existing_store:
+            from apps.features.services import FeatureService
+            FeatureService.enforce_plan_quota(existing_store, 'stores')
+
         store = serializer.save(business=business)
         StoreMembership.objects.create(
             store=store,
@@ -165,6 +174,9 @@ class TeamInvitationViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         store = getattr(request, 'store', None)
         data = serializer.validated_data
+
+        from apps.features.services import FeatureService
+        FeatureService.enforce_plan_quota(store, 'members')
 
         # Check if user is already a member
         from apps.accounts.models import User

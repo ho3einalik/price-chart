@@ -1,16 +1,21 @@
 from rest_framework import viewsets, filters, status
+from rest_framework.decorators import action
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import F
 from apps.tenancy.permissions import IsStoreMemberPermission, TenantFilterBackend, Role, user_has_store_permission
 from apps.catalog.models import ProductVariant
-from .models import Warehouse, InventoryBalance, InventoryMovement
+from .models import Warehouse, InventoryBalance, InventoryMovement, StockCycleCount, StockCycleCountItem
 from .serializers import (
     WarehouseSerializer, InventoryBalanceSerializer,
-    InventoryMovementSerializer, StockAdjustmentSerializer, StockTransferSerializer
+    InventoryMovementSerializer, StockAdjustmentSerializer, StockTransferSerializer,
+    StockCycleCountSerializer, StockCycleCountCreateSerializer, RecordCountResultsSerializer
 )
-from .services import adjust_stock, transfer_stock
+from .services import (
+    adjust_stock, transfer_stock,
+    start_cycle_count, record_cycle_count_items, reconcile_cycle_count, cancel_cycle_count
+)
 
 class WarehouseViewSet(viewsets.ModelViewSet):
     serializer_class = WarehouseSerializer
@@ -136,3 +141,80 @@ class ReorderSuggestionsAPIView(APIView):
                 'estimated_cost': int(b.variant.cost_price * suggested_order_qty),
             })
         return Response(suggestions)
+
+
+class StockCycleCountViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsStoreMemberPermission]
+    filter_backends = [TenantFilterBackend, DjangoFilterBackend, filters.SearchFilter]
+    filterset_fields = ['warehouse', 'status']
+    search_fields = ['count_number', 'notes']
+    queryset = StockCycleCount.objects.all().select_related(
+        'warehouse', 'counted_by', 'reconciled_by'
+    ).prefetch_related('items', 'items__variant', 'items__variant__product')
+
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return StockCycleCountCreateSerializer
+        return StockCycleCountSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = StockCycleCountCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        store = request.store
+        data = serializer.validated_data
+
+        try:
+            warehouse = Warehouse.objects.get(id=data['warehouse_id'], store=store)
+        except Warehouse.DoesNotExist:
+            return Response({'error': 'انبار انتخابی یافت نشد.'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            cycle_count = start_cycle_count(
+                store=store,
+                warehouse=warehouse,
+                variant_ids=data.get('variant_ids'),
+                notes=data.get('notes', ''),
+                user=request.user
+            )
+            return Response(StockCycleCountSerializer(cycle_count).data, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'], url_path='record-counts')
+    def record_counts(self, request, pk=None):
+        cycle_count = self.get_object()
+        serializer = RecordCountResultsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            updated = record_cycle_count_items(
+                cycle_count=cycle_count,
+                items_data=serializer.validated_data['items'],
+                user=request.user
+            )
+            return Response(StockCycleCountSerializer(updated).data)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'], url_path='reconcile')
+    def reconcile(self, request, pk=None):
+        membership = getattr(request, 'membership', None)
+        if not (request.user.is_superuser or request.user.is_staff or (membership and (membership.role in [Role.OWNER, Role.ADMIN, Role.OPS_MANAGER, Role.INVENTORY_MANAGER] or user_has_store_permission(membership, 'inventory.reconcile')))):
+            return Response({'error': 'شما مجوز نهایی‌سازی و تطبیق انبارگردانی را ندارید.'}, status=status.HTTP_403_FORBIDDEN)
+
+        cycle_count = self.get_object()
+        try:
+            completed = reconcile_cycle_count(cycle_count=cycle_count, user=request.user)
+            return Response(StockCycleCountSerializer(completed).data)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'], url_path='cancel')
+    def cancel(self, request, pk=None):
+        cycle_count = self.get_object()
+        reason = request.data.get('reason', '')
+        try:
+            cancelled = cancel_cycle_count(cycle_count=cycle_count, reason=reason, user=request.user)
+            return Response(StockCycleCountSerializer(cancelled).data)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+

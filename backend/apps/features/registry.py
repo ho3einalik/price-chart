@@ -320,3 +320,35 @@ def get_dependent_features(feature_key: str) -> List[FeatureDefinition]:
         if feature_key in f.depends_on:
             dependents.append(f)
     return dependents
+
+
+PLAN_LIMITS: Dict[str, Dict[str, int]] = {
+    SubscriptionTier.FREE: {
+        'max_stores': 1,
+        'max_members': 2,
+        'max_products': 50,
+        'max_monthly_orders': 100,
+    },
+    SubscriptionTier.STARTER: {
+        'max_stores': 2,
+        'max_members': 5,
+        'max_products': 500,
+        'max_monthly_orders': 1000,
+    },
+    SubscriptionTier.PRO: {
+        'max_stores': 5,
+        'max_members': 15,
+        'max_products': 5000,
+        'max_monthly_orders': 10000,
+    },
+    SubscriptionTier.ENTERPRISE: {
+        'max_stores': 999999,
+        'max_members': 999999,
+        'max_products': 999999,
+        'max_monthly_orders': 999999,
+    },
+}
+
+
+def get_plan_limits(tier: str) -> Dict[str, int]:
+    return PLAN_LIMITS.get(tier, PLAN_LIMITS[SubscriptionTier.FREE])

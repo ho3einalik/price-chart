@@ -55,16 +55,61 @@ class OrderViewSet(viewsets.ModelViewSet):
                     'city': data.get('city', ''),
                     'province': data.get('province', ''),
                     'address_line': data.get('address_line', ''),
+                    'email': data.get('customer_email', ''),
+                    'marketing_opt_in': data.get('marketing_opt_in', True),
                 },
                 items_data=data['items'],
                 warehouse=warehouse,
                 channel=data.get('channel'),
                 shipping_cost=data.get('shipping_cost', 0),
                 discount_amount=data.get('discount_amount', 0),
+                utm_source=data.get('utm_source', ''),
+                utm_medium=data.get('utm_medium', ''),
+                utm_campaign=data.get('utm_campaign', ''),
                 notes=data.get('notes', ''),
                 user=request.user
             )
             return Response(OrderDetailSerializer(order).data, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def reorder(self, request, pk=None):
+        order = self.get_object()
+        store = request.store
+        items_data = [
+            {
+                'variant_id': item.variant_id,
+                'quantity': item.quantity,
+                'unit_price': item.unit_price,
+                'unit_discount': item.unit_discount
+            }
+            for item in order.items.all()
+        ]
+        if not items_data:
+            return Response({'error': 'سفارش مبدأ فاقد ردیف کالا است.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            new_order = create_order(
+                store=store,
+                customer_data={
+                    'full_name': order.customer.full_name,
+                    'phone_number': order.customer.phone_number,
+                    'city': order.customer.city,
+                    'province': order.customer.province,
+                    'address_line': order.customer.address_line,
+                    'postal_code': order.customer.postal_code,
+                    'email': order.customer.email,
+                },
+                items_data=items_data,
+                warehouse=order.warehouse,
+                channel=order.channel,
+                shipping_cost=order.shipping_cost,
+                discount_amount=order.discount_amount,
+                notes=f"سفارش مجدد پیرو سفارش قبلی {order.order_number}",
+                user=request.user
+            )
+            return Response(OrderDetailSerializer(new_order).data, status=status.HTTP_201_CREATED)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 

@@ -1,6 +1,11 @@
+import random
 from django.db import transaction
+from django.utils import timezone
 from django.core.exceptions import ValidationError
-from .models import InventoryBalance, InventoryMovement, MovementType, Warehouse
+from .models import (
+    InventoryBalance, InventoryMovement, MovementType, Warehouse,
+    StockCycleCount, StockCycleCountItem, CycleCountStatus
+)
 from apps.audit.services import record_audit_event
 
 class InsufficientStockError(Exception):
@@ -291,4 +296,178 @@ def process_return_stock(store, warehouse, variant, quantity, is_sellable=True, 
         changes={'quantity': quantity, 'is_sellable': is_sellable, 'reference': reference}
     )
     return balance
+
+
+@transaction.atomic
+def start_cycle_count(store, warehouse, variant_ids=None, notes='', user=None):
+    """
+    Initializes a stock cycle count / audit session for a warehouse.
+    Takes a snapshot of system on-hand balances for included variants.
+    """
+    if warehouse.store_id != store.id:
+        raise ValidationError("انبار انتخابی متعلق به این فروشگاه نیست.")
+
+    # Check for active cycle counts on this warehouse
+    active_count = StockCycleCount.objects.filter(
+        store=store,
+        warehouse=warehouse,
+        status__in=[CycleCountStatus.DRAFT, CycleCountStatus.IN_PROGRESS]
+    ).first()
+    if active_count:
+        raise ValidationError(f"یک انبارگردانی در حال انجام ({active_count.count_number}) برای این انبار وجود دارد.")
+
+    date_str = timezone.now().strftime('%y%m%d')
+    suffix = random.randint(1000, 9999)
+    count_number = f"CC-{date_str}-{suffix}"
+
+    cycle_count = StockCycleCount.objects.create(
+        store=store,
+        warehouse=warehouse,
+        count_number=count_number,
+        status=CycleCountStatus.IN_PROGRESS,
+        started_at=timezone.now(),
+        counted_by=user,
+        notes=notes
+    )
+
+    from apps.catalog.models import ProductVariant
+    if variant_ids:
+        variants = ProductVariant.objects.filter(store=store, id__in=variant_ids)
+    else:
+        variants = ProductVariant.objects.filter(store=store, is_active=True)
+
+    items = []
+    for var in variants:
+        balance = InventoryBalance.objects.filter(warehouse=warehouse, variant=var).first()
+        system_qty = balance.on_hand_quantity if balance else 0
+        items.append(
+            StockCycleCountItem(
+                cycle_count=cycle_count,
+                variant=var,
+                system_quantity=system_qty,
+                counted_quantity=None,
+                is_reconciled=False
+            )
+        )
+
+    StockCycleCountItem.objects.bulk_create(items)
+
+    record_audit_event(
+        store=store,
+        user=user,
+        action="CYCLE_COUNT_STARTED",
+        target_type="StockCycleCount",
+        target_id=str(cycle_count.id),
+        changes={'count_number': count_number, 'items_count': len(items)}
+    )
+    return cycle_count
+
+
+@transaction.atomic
+def record_cycle_count_items(cycle_count, items_data, user=None):
+    """
+    Records physical counts on cycle count items.
+    items_data: list of dicts with {'variant_id': ..., 'counted_quantity': ..., 'notes': ...}
+    """
+    cycle_count = StockCycleCount.objects.select_for_update().get(id=cycle_count.id)
+    if cycle_count.status not in [CycleCountStatus.DRAFT, CycleCountStatus.IN_PROGRESS]:
+        raise ValidationError(f"تنها انبارگردانی‌های در حال انجام قابل ثبت شمارش هستند. وضعیت فعلی: {cycle_count.get_status_display()}")
+
+    items_dict = {str(item.variant_id): item for item in cycle_count.items.select_for_update()}
+
+    for entry in items_data:
+        var_id = str(entry['variant_id'])
+        item = items_dict.get(var_id)
+        if not item:
+            continue
+
+        counted_qty = int(entry['counted_quantity'])
+        if counted_qty < 0:
+            raise ValidationError(f"موجودی شمارش‌شده نمی‌تواند منفی باشد ({counted_qty}).")
+
+        item.counted_quantity = counted_qty
+        if 'notes' in entry:
+            item.notes = entry['notes']
+        item.save()
+
+    return cycle_count
+
+
+@transaction.atomic
+def reconcile_cycle_count(cycle_count, user=None):
+    """
+    Reconciles inventory based on physical counts.
+    Generates ADJUSTMENT ledger entries for variances, then completes the cycle count.
+    """
+    cycle_count = StockCycleCount.objects.select_for_update().get(id=cycle_count.id)
+    if cycle_count.status != CycleCountStatus.IN_PROGRESS:
+        raise ValidationError(f"تنها انبارگردانی در حال انجام قابل تطبیق است. وضعیت فعلی: {cycle_count.get_status_display()}")
+
+    items = list(cycle_count.items.select_for_update().select_related('variant'))
+    uncounted = [it for it in items if it.counted_quantity is None]
+    if uncounted:
+        raise ValidationError(f"تعداد {len(uncounted)} قلم کالا هنوز شمارش فیزیکی نشده‌اند و نمی‌توان انبارگردانی را نهایی کرد.")
+
+    reconciled_count = 0
+    adjusted_count = 0
+
+    for item in items:
+        if not item.is_reconciled:
+            diff = item.counted_quantity - item.system_quantity
+            if diff != 0:
+                adjust_stock(
+                    store=cycle_count.store,
+                    warehouse=cycle_count.warehouse,
+                    variant=item.variant,
+                    new_on_hand=item.counted_quantity,
+                    reason=f"تطبیق انبارگردانی {cycle_count.count_number} (اختلاف: {diff:+d})",
+                    user=user
+                )
+                adjusted_count += 1
+
+            item.is_reconciled = True
+            item.save(update_fields=['is_reconciled'])
+            reconciled_count += 1
+
+    cycle_count.status = CycleCountStatus.COMPLETED
+    cycle_count.completed_at = timezone.now()
+    cycle_count.reconciled_by = user
+    cycle_count.save(update_fields=['status', 'completed_at', 'reconciled_by', 'updated_at'])
+
+    record_audit_event(
+        store=cycle_count.store,
+        user=user,
+        action="CYCLE_COUNT_RECONCILED",
+        target_type="StockCycleCount",
+        target_id=str(cycle_count.id),
+        changes={
+            'count_number': cycle_count.count_number,
+            'reconciled_items': reconciled_count,
+            'adjusted_items': adjusted_count
+        }
+    )
+    return cycle_count
+
+
+@transaction.atomic
+def cancel_cycle_count(cycle_count, reason='', user=None):
+    cycle_count = StockCycleCount.objects.select_for_update().get(id=cycle_count.id)
+    if cycle_count.status == CycleCountStatus.COMPLETED:
+        raise ValidationError("انبارگردانی تکمیل‌شده قابل لغو نیست.")
+
+    cycle_count.status = CycleCountStatus.CANCELLED
+    if reason:
+        cycle_count.notes = f"{cycle_count.notes}\nدلیل لغو: {reason}".strip()
+    cycle_count.save(update_fields=['status', 'notes', 'updated_at'])
+
+    record_audit_event(
+        store=cycle_count.store,
+        user=user,
+        action="CYCLE_COUNT_CANCELLED",
+        target_type="StockCycleCount",
+        target_id=str(cycle_count.id),
+        changes={'reason': reason}
+    )
+    return cycle_count
+
 

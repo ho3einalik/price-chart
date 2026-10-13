@@ -14,7 +14,7 @@ from .serializers import (
     POSRegisterSessionSerializer,
     ProformaInvoiceSerializer
 )
-from .services import pos_quick_checkout, convert_proforma_to_order
+from .services import pos_quick_checkout, convert_proforma_to_order, create_quick_sku_order, generate_pos_receipt
 
 class B2BClientProfileViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsStoreMemberPermission]
@@ -111,6 +111,27 @@ class ProformaInvoiceViewSet(viewsets.ModelViewSet):
         except ValidationError as e:
             return Response({'error': str(e.message if hasattr(e, 'message') else e)}, status=status.HTTP_400_BAD_REQUEST)
 
+    @action(detail=True, methods=['post'], url_path='reorder')
+    def reorder(self, request, pk=None):
+        proforma = self.get_object()
+        from datetime import timedelta
+        import uuid
+        new_inv_num = f"PI-{timezone.now().strftime('%y%m%d')}-{uuid.uuid4().hex[:4].upper()}"
+        new_proforma = ProformaInvoice.objects.create(
+            store=proforma.store,
+            invoice_number=new_inv_num,
+            client=proforma.client,
+            subtotal=proforma.subtotal,
+            discount=proforma.discount,
+            tax=proforma.tax,
+            grand_total=proforma.grand_total,
+            status=ProformaStatus.DRAFT,
+            valid_until=timezone.now() + timedelta(days=proforma.client.payment_terms_days or 14),
+            items=proforma.items,
+            notes=f"سفارش مجدد پیرو پیش‌فاکتور قبلی {proforma.invoice_number}"
+        )
+        return Response(ProformaInvoiceSerializer(new_proforma).data, status=status.HTTP_201_CREATED)
+
 
 class POSQuickCheckoutView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsStoreMemberPermission]
@@ -151,3 +172,57 @@ class POSQuickCheckoutView(APIView):
             return Response({'error': str(e.message if hasattr(e, 'message') else e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response({'error': f"خطا در ثبت فروش صندوق: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class POSReceiptDetailView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsStoreMemberPermission]
+
+    def get(self, request, order_id):
+        try:
+            receipt = generate_pos_receipt(request.store, order_id)
+            return Response(receipt, status=status.HTTP_200_OK)
+        except ValidationError as e:
+            return Response({'error': str(e.message if hasattr(e, 'message') else e)}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class WholesaleQuickSKUOrderView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsStoreMemberPermission]
+
+    def post(self, request):
+        client_id = request.data.get('client_id')
+        sku_items = request.data.get('sku_items', [])
+        notes = request.data.get('notes', '')
+
+        if not client_id:
+            return Response({'error': 'شناسه مشتری همکار (client_id) الزامی است.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not sku_items:
+            return Response({'error': 'فهرست اقلام SKU خالی است.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        client = B2BClientProfile.objects.filter(store=request.store, id=client_id).first()
+        if not client:
+            return Response({'error': 'پروفایل همکار عمده‌فروشی یافت نشد.'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            proforma = create_quick_sku_order(
+                store=request.store,
+                client=client,
+                sku_items=sku_items,
+                notes=notes,
+                user=request.user
+            )
+            return Response({
+                'message': 'پیش‌فاکتور سفارش سریع عمده با موفقیت صادر گردید.',
+                'proforma_id': str(proforma.id),
+                'invoice_number': proforma.invoice_number,
+                'client': client.company_name,
+                'grand_total': str(proforma.grand_total),
+                'valid_until': proforma.valid_until.strftime('%Y-%m-%d %H:%M'),
+                'items_count': len(proforma.items)
+            }, status=status.HTTP_201_CREATED)
+        except ValidationError as e:
+            return Response({'error': str(e.message if hasattr(e, 'message') else e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+

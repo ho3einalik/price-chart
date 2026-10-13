@@ -54,12 +54,29 @@ class ReturnRequestViewSet(viewsets.ModelViewSet):
             except OrderItem.DoesNotExist:
                 return Response({'error': f"ردیف سفارش {item.get('order_item_id')} یافت نشد."}, status=status.HTTP_404_NOT_FOUND)
 
+        is_exchange = bool(data.get('is_exchange', False))
+        exchange_variant = None
+        exchange_quantity = int(data.get('exchange_quantity', 0))
+        exchange_price_difference = Decimal(str(data.get('exchange_price_difference', 0)))
+
+        exchange_variant_id = data.get('exchange_variant_id') or data.get('exchange_variant')
+        if is_exchange and exchange_variant_id:
+            from apps.catalog.models import ProductVariant
+            try:
+                exchange_variant = ProductVariant.objects.get(id=exchange_variant_id, store=store)
+            except ProductVariant.DoesNotExist:
+                return Response({'error': 'کالای انتخابی جهت تعویض یافت نشد.'}, status=status.HTTP_404_NOT_FOUND)
+
         try:
             rma = create_return_request(
                 order=order,
                 items_data=formatted_items,
                 customer_notes=notes,
-                user=request.user
+                user=request.user,
+                is_exchange=is_exchange,
+                exchange_variant=exchange_variant,
+                exchange_quantity=exchange_quantity,
+                exchange_price_difference=exchange_price_difference
             )
             return Response(ReturnRequestSerializer(rma).data, status=status.HTTP_201_CREATED)
         except ValidationError as e:

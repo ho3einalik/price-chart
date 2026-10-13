@@ -266,3 +266,166 @@ def convert_proforma_to_order(proforma, user=None):
     )
 
     return order
+
+
+@transaction.atomic
+def create_quick_sku_order(store, client, sku_items, notes='', user=None):
+    """
+    Rapid wholesale ordering using SKU list.
+    Applies volume tier pricing and MOQ, generates a formal B2B Proforma.
+    """
+    if not sku_items:
+        raise ValidationError("حداقل یک قلم کالا با کد SKU الزامی است.")
+
+    from datetime import timedelta
+    items_json = []
+    subtotal = Decimal('0')
+
+    for entry in sku_items:
+        sku = str(entry.get('sku', '')).strip()
+        quantity = int(entry.get('quantity', 1))
+        if quantity <= 0:
+            raise ValidationError(f"تعداد برای کد {sku} باید بزرگتر از صفر باشد.")
+
+        variant = ProductVariant.objects.filter(store=store, sku__iexact=sku).first()
+        if not variant:
+            raise ValidationError(f"کالایی با کد {sku} در انبار این فروشگاه یافت نشد.")
+
+        # Check for Volume Tier Discount
+        tier = VolumeTierDiscount.objects.filter(
+            store=store,
+            variant=variant,
+            min_quantity__lte=quantity
+        ).order_by('-min_quantity').first()
+
+        if tier:
+            unit_price = tier.unit_price
+        elif variant.wholesale_price > Decimal('0'):
+            unit_price = variant.wholesale_price
+        else:
+            unit_price = variant.retail_price
+
+        row_total = unit_price * quantity
+        subtotal += row_total
+
+        items_json.append({
+            'variant_id': str(variant.id),
+            'sku': variant.sku,
+            'name': f"{variant.product.name} - {variant.name}",
+            'quantity': quantity,
+            'unit_price': str(unit_price),
+            'total_price': str(row_total),
+            'tier_applied': tier.tier_label if tier else 'قیمت عمده استاندارد'
+        })
+
+    invoice_number = f"PI-SKU-{timezone.now().strftime('%y%m%d')}-{uuid.uuid4().hex[:4].upper()}"
+    valid_until = timezone.now() + timedelta(days=client.payment_terms_days or 14)
+
+    proforma = ProformaInvoice.objects.create(
+        store=store,
+        invoice_number=invoice_number,
+        client=client,
+        subtotal=subtotal,
+        discount=Decimal('0'),
+        tax=Decimal('0'),
+        grand_total=subtotal,
+        status=ProformaStatus.SENT,
+        valid_until=valid_until,
+        items=items_json,
+        notes=notes or f"ثبت سفارش سریع بر اساس کد SKU برای {client.company_name}"
+    )
+
+    record_audit_event(
+        store=store,
+        user=user,
+        action="WHOLESALE_QUICK_SKU_ORDER",
+        target_type="ProformaInvoice",
+        target_id=str(proforma.id),
+        changes={'client': client.company_name, 'grand_total': str(subtotal), 'items_count': len(items_json)}
+    )
+    return proforma
+
+
+def generate_pos_receipt(store, order_id):
+    """
+    Constructs a receipt data structure and formatted 80mm thermal receipt text
+    for point-of-sale customer receipts.
+    """
+    order = Order.objects.filter(store=store, id=order_id).select_related('customer', 'warehouse', 'created_by').prefetch_related('items').first()
+    if not order:
+        raise ValidationError("سفارش مورد نظر یافت نشد.")
+
+    items_list = []
+    for item in order.items.all():
+        items_list.append({
+            'sku': item.variant_sku,
+            'name': item.variant_name,
+            'quantity': item.quantity,
+            'unit_price': int(item.unit_price),
+            'discount': int(item.unit_discount * item.quantity),
+            'total_price': int(item.total_price)
+        })
+
+    created_at_str = order.created_at.strftime('%Y/%m/%d %H:%M') if order.created_at else ''
+    cashier = order.created_by.get_full_name() if order.created_by and hasattr(order.created_by, 'get_full_name') else (order.created_by.phone if order.created_by else 'صندوقدار')
+
+    receipt_lines = [
+        "=" * 40,
+        f"{store.name.center(40)}",
+        f"فاکتور فروش صندوق حضوری".center(40),
+        "=" * 40,
+        f"شماره فاکتور: {order.order_number}",
+        f"تاریخ و ساعت: {created_at_str}",
+        f"صندوقدار: {cashier}",
+        f"مشتری: {order.customer.full_name} ({order.customer.phone_number})",
+        "-" * 40,
+        f"{'شرح کالا':<20}{'تعداد':^6}{'مبلغ کل (تومان)':>14}",
+        "-" * 40,
+    ]
+
+    for it in items_list:
+        name_trunc = it['name'][:18]
+        receipt_lines.append(f"{name_trunc:<20}{it['quantity']:^6}{it['total_price']:>14,}")
+
+    receipt_lines.extend([
+        "-" * 40,
+        f"مجموع اقلام: {int(order.total_items_price):,}",
+        f"تخفیف: {int(order.discount_amount):,}",
+        f"مالیات: {int(order.tax_amount):,}",
+        "=" * 40,
+        f"مبلغ قابل پرداخت: {int(order.grand_total):,} تومان",
+        "=" * 40,
+        "از خرید و اعتماد شما سپاسگزاریم".center(40),
+        "امکان تعویض یا مرجوعی کالا تا ۷ روز با فاکتور".center(40),
+        "=" * 40,
+    ])
+
+    return {
+        'store': {
+            'id': str(store.id),
+            'name': store.name,
+            'currency': order.currency
+        },
+        'order': {
+            'id': str(order.id),
+            'order_number': order.order_number,
+            'created_at': created_at_str,
+            'cashier': cashier,
+            'payment_status': order.get_payment_status_display(),
+            'channel': order.get_channel_display()
+        },
+        'customer': {
+            'name': order.customer.full_name,
+            'phone': order.customer.phone_number
+        },
+        'items': items_list,
+        'financials': {
+            'total_items_price': int(order.total_items_price),
+            'discount_amount': int(order.discount_amount),
+            'shipping_cost': int(order.shipping_cost),
+            'tax_amount': int(order.tax_amount),
+            'grand_total': int(order.grand_total)
+        },
+        'thermal_receipt_text': "\n".join(receipt_lines)
+    }
+

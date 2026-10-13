@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.db import transaction
 from django.utils.text import slugify
-from .models import Category, Product, ProductVariant, ProductImage
+from .models import Category, Product, ProductVariant, ProductImage, ProductPriceHistory
 
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
@@ -43,10 +43,69 @@ class ProductVariantSerializer(serializers.ModelSerializer):
 
     def get_total_available(self, obj):
         from apps.inventory.models import InventoryBalance
-        from django.db.models import Sum, F
         balances = InventoryBalance.objects.filter(variant=obj)
         total = sum(b.available for b in balances)
         return total
+
+    def update(self, instance, validated_data):
+        old_retail = instance.retail_price
+        old_cost = instance.cost_price
+        new_retail = validated_data.get('retail_price', old_retail)
+        new_cost = validated_data.get('cost_price', old_cost)
+
+        updated_instance = super().update(instance, validated_data)
+
+        if old_retail != new_retail or old_cost != new_cost:
+            request = self.context.get('request')
+            user = getattr(request, 'user', None) if request and request.user.is_authenticated else None
+            ProductPriceHistory.objects.create(
+                store=instance.store,
+                variant=instance,
+                old_retail_price=old_retail,
+                new_retail_price=new_retail,
+                old_cost_price=old_cost,
+                new_cost_price=new_cost,
+                reason=self.context.get('price_change_reason', 'بروزرسانی مستقیم قیمت از کاتالوگ'),
+                changed_by=user
+            )
+        return updated_instance
+
+class ProductPriceHistorySerializer(serializers.ModelSerializer):
+    variant_sku = serializers.CharField(source='variant.sku', read_only=True)
+    variant_name = serializers.CharField(source='variant.name', read_only=True)
+    changed_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProductPriceHistory
+        fields = [
+            'id', 'variant', 'variant_sku', 'variant_name',
+            'old_retail_price', 'new_retail_price',
+            'old_cost_price', 'new_cost_price',
+            'reason', 'changed_by', 'changed_by_name',
+            'created_at'
+        ]
+        read_only_fields = ['id', 'created_at']
+
+    def get_changed_by_name(self, obj):
+        if obj.changed_by:
+            return obj.changed_by.get_full_name() or obj.changed_by.phone or str(obj.changed_by)
+        return 'سیستم'
+
+class BulkUpdateItemSerializer(serializers.Serializer):
+    variant_id = serializers.UUIDField(required=False)
+    sku = serializers.CharField(required=False)
+    product_id = serializers.UUIDField(required=False)
+    retail_price = serializers.DecimalField(max_digits=14, decimal_places=0, required=False)
+    cost_price = serializers.DecimalField(max_digits=14, decimal_places=0, required=False)
+    wholesale_price = serializers.DecimalField(max_digits=14, decimal_places=0, required=False)
+    is_active = serializers.BooleanField(required=False)
+    status = serializers.ChoiceField(choices=['DRAFT', 'ACTIVE', 'ARCHIVED'], required=False)
+    stock_quantity = serializers.IntegerField(required=False)
+    warehouse_id = serializers.UUIDField(required=False)
+    reason = serializers.CharField(max_length=255, required=False, default="بروزرسانی گروهی")
+
+class BulkUpdateSerializer(serializers.Serializer):
+    items = BulkUpdateItemSerializer(many=True)
 
 class ProductImageSerializer(serializers.ModelSerializer):
     class Meta:

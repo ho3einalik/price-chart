@@ -6,7 +6,9 @@ from .views import (
     POSTerminalViewSet,
     POSRegisterSessionViewSet,
     ProformaInvoiceViewSet,
-    POSQuickCheckoutView
+    POSQuickCheckoutView,
+    POSReceiptDetailView,
+    WholesaleQuickSKUOrderView
 )
 
 router = DefaultRouter()
@@ -18,5 +20,7 @@ router.register(r'proformas', ProformaInvoiceViewSet, basename='wholesale-profor
 
 urlpatterns = [
     path('pos/checkout/', POSQuickCheckoutView.as_view(), name='pos-quick-checkout'),
+    path('pos/receipt/<uuid:order_id>/', POSReceiptDetailView.as_view(), name='pos-receipt-detail'),
+    path('quick-sku-order/', WholesaleQuickSKUOrderView.as_view(), name='wholesale-quick-sku-order'),
     path('', include(router.urls)),
 ]

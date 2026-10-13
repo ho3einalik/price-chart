@@ -89,3 +89,56 @@ class InventoryMovement(TenantScopedModel):
 
     def __str__(self):
         return f"[{self.movement_type}] {self.quantity} x {self.variant.sku} @ {self.warehouse.name}"
+
+
+class CycleCountStatus(models.TextChoices):
+    DRAFT = 'DRAFT', 'پیش‌نویس انبارگردانی'
+    IN_PROGRESS = 'IN_PROGRESS', 'در حال شمارش'
+    COMPLETED = 'COMPLETED', 'تطبیق داده شده و نهایی'
+    CANCELLED = 'CANCELLED', 'لغو شده'
+
+
+class StockCycleCount(TenantScopedModel):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE, related_name='cycle_counts', verbose_name="انبار")
+    count_number = models.CharField(max_length=50, db_index=True, verbose_name="شماره انبارگردانی")
+    status = models.CharField(max_length=20, choices=CycleCountStatus.choices, default=CycleCountStatus.DRAFT, verbose_name="وضعیت")
+    started_at = models.DateTimeField(null=True, blank=True, verbose_name="شروع انبارگردانی")
+    completed_at = models.DateTimeField(null=True, blank=True, verbose_name="پایان انبارگردانی")
+    counted_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='cycle_counts_performed', verbose_name="مسئول شمارش")
+    reconciled_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='cycle_counts_reconciled', verbose_name="تأییدکننده تطبیق")
+    notes = models.TextField(blank=True, verbose_name="توضیحات و یادداشت‌ها")
+
+    class Meta:
+        verbose_name = 'انبارگردانی'
+        verbose_name_plural = 'انبارگردانی‌ها'
+        unique_together = ('store', 'count_number')
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.count_number} @ {self.warehouse.name} ({self.get_status_display()})"
+
+
+class StockCycleCountItem(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    cycle_count = models.ForeignKey(StockCycleCount, on_delete=models.CASCADE, related_name='items')
+    variant = models.ForeignKey(ProductVariant, on_delete=models.CASCADE, related_name='cycle_count_items', verbose_name="تنوع کالا")
+    system_quantity = models.IntegerField(default=0, verbose_name="موجودی سیستم قبل از شمارش")
+    counted_quantity = models.IntegerField(null=True, blank=True, verbose_name="موجودی فیزیکی شمارش‌شده")
+    is_reconciled = models.BooleanField(default=False, verbose_name="تطبیق داده شده")
+    notes = models.CharField(max_length=255, blank=True, verbose_name="توضیحات مغایرت")
+
+    class Meta:
+        verbose_name = 'ردیف انبارگردانی'
+        verbose_name_plural = 'ردیف‌های انبارگردانی'
+        unique_together = ('cycle_count', 'variant')
+
+    @property
+    def variance(self):
+        if self.counted_quantity is None:
+            return 0
+        return self.counted_quantity - self.system_quantity
+
+    def __str__(self):
+        return f"{self.variant.sku}: سیستم={self.system_quantity}, شمارش={self.counted_quantity}"
+

@@ -16,8 +16,12 @@ def generate_order_number(store):
 
 @transaction.atomic
 def create_order(store, customer_data, items_data, warehouse, channel=OrderChannel.MANUAL,
-                 shipping_cost=Decimal('0'), discount_amount=Decimal('0'), notes='', user=None):
+                 shipping_cost=Decimal('0'), discount_amount=Decimal('0'),
+                 utm_source='', utm_medium='', utm_campaign='', notes='', user=None):
     """Creates an order, captures cost snapshots, and atomically reserves inventory"""
+    from apps.features.services import FeatureService
+    FeatureService.enforce_plan_quota(store, 'monthly_orders')
+
     if not items_data:
         raise ValueError("سفارش باید حداقل دارای یک ردیف کالا باشد.")
     if shipping_cost < Decimal('0'):
@@ -27,7 +31,9 @@ def create_order(store, customer_data, items_data, warehouse, channel=OrderChann
 
     phone = customer_data.get('phone_number') or customer_data.get('phone') or '09000000000'
     name = customer_data.get('full_name') or customer_data.get('name') or 'مشتری بدون نام'
-    customer, _ = Customer.objects.get_or_create(
+    opt_in = customer_data.get('marketing_opt_in', True)
+
+    customer, created = Customer.objects.get_or_create(
         store=store,
         phone_number=phone,
         defaults={
@@ -37,8 +43,12 @@ def create_order(store, customer_data, items_data, warehouse, channel=OrderChann
             'address_line': customer_data.get('address_line', '') or customer_data.get('address', ''),
             'postal_code': customer_data.get('postal_code', ''),
             'email': customer_data.get('email', ''),
+            'marketing_opt_in': opt_in,
         }
     )
+    if not created and 'marketing_opt_in' in customer_data and customer.marketing_opt_in != opt_in:
+        customer.marketing_opt_in = opt_in
+        customer.save(update_fields=['marketing_opt_in', 'updated_at'])
 
     order_number = generate_order_number(store)
     order = Order.objects.create(
@@ -53,6 +63,9 @@ def create_order(store, customer_data, items_data, warehouse, channel=OrderChann
         fulfillment_status=FulfillmentStatus.UNFULFILLED,
         shipping_cost=shipping_cost,
         discount_amount=discount_amount,
+        utm_source=utm_source,
+        utm_medium=utm_medium,
+        utm_campaign=utm_campaign,
         notes=notes,
         created_by=user
     )

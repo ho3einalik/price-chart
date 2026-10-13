@@ -71,3 +71,22 @@ class ProductImage(models.Model):
 
     class Meta:
         ordering = ['sort_order', 'id']
+
+
+class ProductPriceHistory(TenantScopedModel):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    variant = models.ForeignKey(ProductVariant, on_delete=models.CASCADE, related_name='price_history', verbose_name="تنوع کالا")
+    old_retail_price = models.DecimalField(max_digits=14, decimal_places=0, verbose_name="قیمت فروش قبلی")
+    new_retail_price = models.DecimalField(max_digits=14, decimal_places=0, verbose_name="قیمت فروش جدید")
+    old_cost_price = models.DecimalField(max_digits=14, decimal_places=0, default=Decimal('0'), verbose_name="قیمت خرید قبلی")
+    new_cost_price = models.DecimalField(max_digits=14, decimal_places=0, default=Decimal('0'), verbose_name="قیمت خرید جدید")
+    reason = models.CharField(max_length=255, blank=True, verbose_name="دلیل تغییر قیمت")
+    changed_by = models.ForeignKey('accounts.User', on_delete=models.SET_NULL, null=True, blank=True, verbose_name="تغییردهنده")
+
+    class Meta:
+        verbose_name = 'تاریخچه تغییر قیمت'
+        verbose_name_plural = 'تاریخچه تغییرات قیمت'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.variant.sku}: {self.old_retail_price:,} -> {self.new_retail_price:,}"

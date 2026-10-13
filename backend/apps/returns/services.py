@@ -19,7 +19,10 @@ from django.db.models import Sum
 from apps.orders.models import Order, OrderItem, FulfillmentStatus, OrderStatus
 
 @transaction.atomic
-def create_return_request(order, items_data, customer_notes='', user=None):
+def create_return_request(
+    order, items_data, customer_notes='', user=None,
+    is_exchange=False, exchange_variant=None, exchange_quantity=0, exchange_price_difference=Decimal('0')
+):
     if not items_data:
         raise ValidationError("درخواست مرجوعی باید حداقل دارای یک ردیف کالا باشد.")
 
@@ -49,7 +52,11 @@ def create_return_request(order, items_data, customer_notes='', user=None):
         refund_status=RefundStatus.PENDING,
         customer_notes=customer_notes,
         created_by=user,
-        refund_amount=Decimal('0')
+        refund_amount=Decimal('0'),
+        is_exchange=is_exchange,
+        exchange_variant=exchange_variant,
+        exchange_quantity=exchange_quantity,
+        exchange_price_difference=exchange_price_difference
     )
 
     for item_data in items_data:
@@ -194,6 +201,30 @@ def inspect_and_process_return(rma, inspection_items_data, warehouse, user=None,
                 reason=f"قرنطینه کالای معیوب مرجوعی {rma.rma_number}",
                 user=user
             )
+
+    # Handle item exchange dispatch from inventory
+    if rma.is_exchange and rma.exchange_variant and rma.exchange_quantity > 0:
+        from apps.inventory.services import get_or_create_balance, MovementType, InventoryMovement
+        exchange_bal = get_or_create_balance(rma.store, warehouse, rma.exchange_variant)
+        if exchange_bal.on_hand_quantity < rma.exchange_quantity:
+            raise ValidationError(
+                f"موجودی انبار {warehouse.name} برای ارسال کالای جایگزین ({rma.exchange_variant.sku}) کافی نیست. "
+                f"موجودی فعلی: {exchange_bal.on_hand_quantity}، تعداد موردنیاز: {rma.exchange_quantity}"
+            )
+        exchange_bal.on_hand_quantity -= rma.exchange_quantity
+        exchange_bal.save()
+
+        InventoryMovement.objects.create(
+            store=rma.store,
+            warehouse=warehouse,
+            variant=rma.exchange_variant,
+            movement_type=MovementType.SALE,
+            quantity=-rma.exchange_quantity,
+            balance_after=exchange_bal.on_hand_quantity,
+            reference=f"EXCHANGE_{rma.rma_number}",
+            reason=f"خروج کالای تعویضی بابت مرجوعی {rma.rma_number}",
+            user=user
+        )
 
     rma.status = ReturnStatus.COMPLETED
     rma.refund_status = refund_status

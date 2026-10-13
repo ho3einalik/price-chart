@@ -15,6 +15,7 @@ class Customer(TenantScopedModel):
     city = models.CharField(max_length=100, blank=True, verbose_name="شهر")
     postal_code = models.CharField(max_length=20, blank=True, verbose_name="کد پستی")
     address_line = models.TextField(blank=True, verbose_name="نشانی کامل")
+    marketing_opt_in = models.BooleanField(default=True, verbose_name="موافقت با دریافت پیام‌های بازاریابی")
 
     class Meta:
         verbose_name = 'مشتری'
@@ -74,6 +75,9 @@ class Order(TenantScopedModel):
     grand_total = models.DecimalField(max_digits=14, decimal_places=0, default=Decimal('0'), verbose_name="مبلغ نهایی")
     
     notes = models.TextField(blank=True, verbose_name="یادداشت")
+    utm_source = models.CharField(max_length=100, blank=True, verbose_name="منبع تبلیغاتی (UTM Source)")
+    utm_medium = models.CharField(max_length=100, blank=True, verbose_name="نوع رسانه (UTM Medium)")
+    utm_campaign = models.CharField(max_length=150, blank=True, verbose_name="کمپین (UTM Campaign)")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
 
     class Meta:

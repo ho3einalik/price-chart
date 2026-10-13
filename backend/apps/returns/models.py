@@ -61,6 +61,12 @@ class ReturnRequest(TenantScopedModel):
     staff_notes = models.TextField(blank=True, verbose_name="یادداشت کارشناس فروشگاه")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
 
+    # Item exchange support
+    is_exchange = models.BooleanField(default=False, verbose_name="درخواست تعویض کالا")
+    exchange_variant = models.ForeignKey(ProductVariant, on_delete=models.SET_NULL, null=True, blank=True, related_name='exchange_returns', verbose_name="کالای جایگزین")
+    exchange_quantity = models.PositiveIntegerField(default=0, verbose_name="تعداد کالای جایگزین")
+    exchange_price_difference = models.DecimalField(max_digits=14, decimal_places=0, default=Decimal('0'), verbose_name="مابه‌التفاوت تعویض (تومان)")
+
     class Meta:
         verbose_name = 'درخواست مرجوعی (RMA)'
         verbose_name_plural = 'درخواست‌های مرجوعی (RMA)'

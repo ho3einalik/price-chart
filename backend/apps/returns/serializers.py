@@ -25,6 +25,7 @@ class ReturnRequestSerializer(serializers.ModelSerializer):
     customer_phone = serializers.CharField(source='customer.phone_number', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     refund_status_display = serializers.CharField(source='get_refund_status_display', read_only=True)
+    exchange_variant_sku = serializers.CharField(source='exchange_variant.sku', read_only=True)
     items = ReturnItemSerializer(many=True, read_only=True)
 
     class Meta:
@@ -33,6 +34,10 @@ class ReturnRequestSerializer(serializers.ModelSerializer):
             'id', 'rma_number', 'order', 'order_number', 'customer',
             'customer_name', 'customer_phone', 'status', 'status_display',
             'refund_status', 'refund_status_display', 'refund_amount',
-            'customer_notes', 'staff_notes', 'items', 'created_at', 'updated_at'
+            'customer_notes', 'staff_notes',
+            'is_exchange', 'exchange_variant', 'exchange_variant_sku',
+            'exchange_quantity', 'exchange_price_difference',
+            'items', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'rma_number', 'status', 'refund_amount', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'rma_number', 'status', 'refund_amount', 'exchange_variant_sku', 'created_at', 'updated_at']
+
