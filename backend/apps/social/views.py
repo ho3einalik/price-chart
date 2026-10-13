@@ -5,6 +5,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
+from apps.tenancy.models import Role
 from apps.tenancy.permissions import (
     IsStoreMemberPermission,
     TenantFilterBackend,
@@ -138,6 +139,10 @@ class SocialContentViewSet(viewsets.ModelViewSet):
         elif action_val in ['REJECTED', 'CHANGES_REQUESTED'] and not user_has_store_permission(membership, 'content.reject'):
             raise PermissionDenied("دسترسی رد یا درخواست اصلاح محتوا را ندارید.")
 
+        is_owner_or_admin = request.user.is_superuser or (membership and membership.role in [Role.OWNER, Role.ADMIN])
+        if action_val == 'APPROVED' and content.creator_id == request.user.id and not is_owner_or_admin:
+            raise PermissionDenied("تولیدکننده محتوا مجاز به تأیید محتوای خود نیست و بررسی مستقل توسط مدیر الزامی است.")
+
         updated = SocialService.review_content(
             content=content,
             reviewer=request.user,
@@ -170,12 +175,17 @@ class SocialContentViewSet(viewsets.ModelViewSet):
         if not user_has_store_permission(membership, 'content.publish'):
             raise PermissionDenied("دسترسی انتشار محتوا را ندارید.")
 
+        is_owner_or_admin = request.user.is_superuser or (membership and membership.role in [Role.OWNER, Role.ADMIN])
+        if content.creator_id == request.user.id and not is_owner_or_admin:
+            raise PermissionDenied("تولیدکننده محتوا مجاز به تأیید و انتشار محتوای خود بدون بررسی مستقل توسط مدیر نیست.")
+
         input_serializer = ContentPublishInputSerializer(data=request.data)
         input_serializer.is_valid(raise_exception=True)
 
         updated = SocialService.publish_content(
             content=content,
             published_url=input_serializer.validated_data.get('published_url', ''),
+            external_post_id=input_serializer.validated_data.get('external_post_id', ''),
             user=request.user
         )
         return Response(SocialContentDetailSerializer(updated).data)
@@ -217,6 +227,11 @@ class SocialContentViewSet(viewsets.ModelViewSet):
         membership = getattr(request, 'membership', None)
         if not user_has_store_permission(membership, 'content.publish'):
             raise PermissionDenied("فقط مدیر یا ادمین ارشد مجاز به تأیید نهایی مدارک انتشار محتوا است.")
+
+        is_owner_or_admin = request.user.is_superuser or (membership and membership.role in [Role.OWNER, Role.ADMIN])
+        if content.creator_id == request.user.id and not is_owner_or_admin:
+            raise PermissionDenied("تولیدکننده محتوا مجاز به تأیید مدرک انتشار خود نیست و بررسی مستقل توسط مدیر الزامی است.")
+
         approved = request.data.get('approved', True)
         if isinstance(approved, str):
             approved = approved.lower() in ['true', '1', 'yes']

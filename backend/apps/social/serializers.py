@@ -132,10 +132,10 @@ class SocialContentCreateUpdateSerializer(serializers.ModelSerializer):
         model = SocialContent
         fields = [
             'id', 'account', 'campaign', 'content_type', 'title', 'caption',
-            'hashtags', 'media_urls', 'thumbnail_url', 'status', 'publishing_mode',
-            'assignee', 'scheduled_at', 'published_url', 'related_product', 'destination_url'
+            'hashtags', 'media_urls', 'thumbnail_url', 'publishing_mode',
+            'assignee', 'scheduled_at', 'related_product', 'destination_url'
         ]
-        read_only_fields = ['id']
+        read_only_fields = ['id', 'status', 'published_url', 'published_at', 'approved_by', 'external_post_id']
 
 
 class ContentReviewInputSerializer(serializers.Serializer):
@@ -148,7 +148,8 @@ class ContentScheduleInputSerializer(serializers.Serializer):
 
 
 class ContentPublishInputSerializer(serializers.Serializer):
-    published_url = serializers.CharField(required=False, allow_blank=True)
+    published_url = serializers.CharField(required=False, allow_blank=True, default='')
+    external_post_id = serializers.CharField(required=False, allow_blank=True, default='')
 
 
 class RecordMetricsInputSerializer(serializers.Serializer):

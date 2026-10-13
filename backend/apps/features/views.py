@@ -1,7 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import permissions, status
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from apps.tenancy.permissions import IsStoreMemberPermission, IsStoreAdminOrOwnerPermission, get_request_store
 from .services import FeatureService
@@ -10,7 +10,10 @@ from .serializers import (
     FeatureItemSerializer,
     FeatureToggleInputSerializer,
     SubscriptionTierUpdateInputSerializer,
-    IntegrationConfigInputSerializer
+    IntegrationConfigInputSerializer,
+    SubscriptionInvoiceSerializer,
+    CreateInvoiceInputSerializer,
+    CheckoutInvoiceInputSerializer,
 )
 
 
@@ -133,6 +136,49 @@ class SubscriptionInvoiceListView(APIView):
 class SubscriptionInvoiceCheckoutView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsStoreAdminOrOwnerPermission]
 
+    def _validate_and_build_callback_url(self, request, client_callback: str, invoice) -> str:
+        import urllib.parse
+        from django.conf import settings as django_settings
+
+        default_callback = request.build_absolute_uri('/api/v1/features/invoices/verify/')
+        if not client_callback:
+            return default_callback
+
+        parsed = urllib.parse.urlparse(client_callback)
+
+        if parsed.scheme and parsed.scheme not in ['http', 'https']:
+            raise ValidationError({'callback_url': 'پروتکل آدرس بازگشت درگاه نامعتبر است.'})
+
+        # Relative path is inherently safe (resolves on the current trusted server)
+        if not parsed.netloc:
+            return request.build_absolute_uri(client_callback)
+
+        # Allowlist of trusted hostnames
+        trusted_hosts = set()
+        request_host = request.get_host().split(':')[0].lower()
+        trusted_hosts.add(request_host)
+        trusted_hosts.add('localhost')
+        trusted_hosts.add('127.0.0.1')
+        trusted_hosts.add('testserver')
+
+        for h in getattr(django_settings, 'ALLOWED_HOSTS', []):
+            if h and h != '*':
+                trusted_hosts.add(h.split(':')[0].lower())
+
+        frontend_url = getattr(django_settings, 'FRONTEND_URL', None)
+        if frontend_url:
+            f_host = urllib.parse.urlparse(frontend_url).netloc.split(':')[0].lower()
+            if f_host:
+                trusted_hosts.add(f_host)
+
+        target_host = parsed.netloc.split(':')[0].lower()
+        if target_host not in trusted_hosts:
+            raise ValidationError({
+                'callback_url': f"آدرس بازگشت درگاه مجاز نیست. دامنه '{target_host}' در فهرست دامنه‌های مجاز سیستم قرار ندارد."
+            })
+
+        return client_callback
+
     def post(self, request, pk):
         store = get_request_store(request)
         try:
@@ -143,14 +189,15 @@ class SubscriptionInvoiceCheckoutView(APIView):
         serializer = CheckoutInvoiceInputSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        callback_url = serializer.validated_data.get('callback_url') or request.build_absolute_uri('/api/v1/features/invoices/verify/')
+        client_callback = serializer.validated_data.get('callback_url', '').strip()
+        safe_callback = self._validate_and_build_callback_url(request, client_callback, invoice)
         gateway_name = serializer.validated_data.get('gateway', 'zarinpal')
 
         from .services import SubscriptionPaymentService
         res = SubscriptionPaymentService.initiate_subscription_payment(
             invoice=invoice,
             store=store,
-            callback_url=callback_url,
+            callback_url=safe_callback,
             gateway_name=gateway_name
         )
 

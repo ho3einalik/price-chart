@@ -69,6 +69,20 @@ class SocialService:
 
     @staticmethod
     def publish_content(content, published_url="", external_post_id="", user=None):
+        from .models import PublishingMode
+
+        published_url = (published_url or content.published_url or content.proof_url).strip()
+        external_post_id = (external_post_id or content.external_post_id).strip()
+
+        if content.publishing_mode == PublishingMode.DIRECT_API:
+            if not external_post_id:
+                raise ValidationError({"external_post_id": "برای انتشار مستقیم از طریق API، شناسه پست در پلتفرم خارجی (external_post_id) الزامی است."})
+        else:
+            # MANUAL_REMINDER mode: requires publication proof evidence (published_url or proof_image_url)
+            has_proof = bool(published_url or content.proof_url or content.proof_image_url)
+            if not has_proof:
+                raise ValidationError({"published_url": "ثبت انتشار نیازمند ارائه مدرک معتبر انتشار یا آدرس پست منتشر شده است."})
+
         content.status = ContentStatus.PUBLISHED
         content.published_at = timezone.now()
         if user:
@@ -85,7 +99,7 @@ class SocialService:
                 content=content,
                 reviewer=user,
                 action=ApprovalAction.APPROVED,
-                feedback=f"محتوا توسط {user_name} به عنوان منتشرشده ثبت گردید."
+                feedback=f"انتشار محتوا توسط {user_name} با تأیید شواهد انتشار ثبت شد."
             )
         return content
 

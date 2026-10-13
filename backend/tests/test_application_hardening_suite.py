@@ -220,6 +220,14 @@ class TestApplicationHardeningSuite:
             }]
         )
 
+        # Ensure stock in warehouses
+        bal1 = get_or_create_balance(store=store, warehouse=setup_data['wh1'], variant=variant)
+        bal1.on_hand_quantity = 50
+        bal1.save()
+        bal2 = get_or_create_balance(store=store, warehouse=setup_data['wh2'], variant=variant)
+        bal2.on_hand_quantity = 50
+        bal2.save()
+
         # 1. First conversion succeeds
         order = convert_proforma_to_order(proforma=proforma, user=user)
         assert order is not None
@@ -310,3 +318,159 @@ class TestApplicationHardeningSuite:
             HTTP_X_STORE_ID=str(store.id)
         )
         assert res_again.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_social_publishing_evidence_and_self_approval_denial(self, setup_data):
+        from apps.social.models import SocialContent, SocialPlatform, ContentType, ContentStatus, PublishingMode
+        from apps.features.models import StoreFeatureSetting, SubscriptionTier
+        store = setup_data['store']
+        owner = setup_data['owner']
+        StoreFeatureSetting.objects.create(store=store, tier=SubscriptionTier.PRO)
+        creator = User.objects.create_user(email="creator@test.com", password="pass", full_name="Creator User")
+        StoreMembership.objects.create(
+            store=store,
+            user=creator,
+            role=Role.CONTENT_CREATOR,
+            custom_permissions=['content.create', 'content.submit', 'content.publish'],
+            status=MembershipStatus.ACTIVE
+        )
+
+        content = SocialContent.objects.create(
+            store=store,
+            creator=creator,
+            title="Spring Promo",
+            content_type=ContentType.POST,
+            publishing_mode=PublishingMode.MANUAL_REMINDER,
+            status=ContentStatus.READY_FOR_REVIEW
+        )
+
+        creator_client = APIClient()
+        creator_client.force_authenticate(user=creator)
+
+        # 1. Creator cannot self-approve or publish without independent manager review
+        res_self_pub = creator_client.post(
+            f'/api/v1/social/contents/{content.id}/publish/',
+            {'published_url': 'https://instagram.com/p/123/'},
+            HTTP_X_STORE_ID=str(store.id)
+        )
+        assert res_self_pub.status_code == status.HTTP_403_FORBIDDEN
+
+        # 2. Manager cannot publish without evidence
+        owner_client = APIClient()
+        owner_client.force_authenticate(user=owner)
+
+        res_no_evidence = owner_client.post(
+            f'/api/v1/social/contents/{content.id}/publish/',
+            {},
+            HTTP_X_STORE_ID=str(store.id)
+        )
+        assert res_no_evidence.status_code == status.HTTP_400_BAD_REQUEST
+
+        # 3. Manager publishes with valid evidence -> succeeds and sets approved_by
+        res_valid_pub = owner_client.post(
+            f'/api/v1/social/contents/{content.id}/publish/',
+            {'published_url': 'https://instagram.com/p/valid_post/'},
+            HTTP_X_STORE_ID=str(store.id)
+        )
+        assert res_valid_pub.status_code == status.HTTP_200_OK
+        content.refresh_from_db()
+        assert content.status == ContentStatus.PUBLISHED
+        assert content.approved_by == owner
+        assert content.published_url == 'https://instagram.com/p/valid_post/'
+
+    def test_subscription_checkout_arbitrary_callback_rejection(self, setup_data):
+        from apps.features.models import SubscriptionInvoice, InvoiceStatus, SubscriptionTier
+        store = setup_data['store']
+        owner = setup_data['owner']
+
+        invoice = SubscriptionInvoice.objects.create(
+            store=store,
+            tier=SubscriptionTier.PRO,
+            amount=Decimal('490000'),
+            status=InvoiceStatus.PENDING,
+            payment_reference="INV-TEST-CB"
+        )
+
+        client = APIClient()
+        client.force_authenticate(user=owner)
+
+        # 1. Arbitrary attacker callback is rejected
+        res_evil = client.post(
+            f'/api/v1/features/invoices/{invoice.id}/checkout/',
+            {
+                'callback_url': 'https://evil-phishing-site.com/steal-token',
+                'gateway': 'zarinpal'
+            },
+            HTTP_X_STORE_ID=str(store.id)
+        )
+        assert res_evil.status_code == status.HTTP_400_BAD_REQUEST
+        assert 'callback_url' in res_evil.data
+
+        # 2. Cross-store invoice access is denied (404)
+        other_store = setup_data['other_store']
+        other_owner = setup_data['other_store'].business.owner
+        other_client = APIClient()
+        other_client.force_authenticate(user=other_owner)
+
+        res_cross = other_client.post(
+            f'/api/v1/features/invoices/{invoice.id}/checkout/',
+            {},
+            HTTP_X_STORE_ID=str(other_store.id)
+        )
+        assert res_cross.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_abandoned_cart_sms_status_distinction_and_retry(self, setup_data):
+        from unittest import mock
+        from apps.marketing.models import AbandonedCart, AbandonedCartStatus, RecoveryDeliveryStatus
+        from apps.marketing.tasks import check_abandoned_carts_and_notify
+
+        store = setup_data['store']
+        customer = setup_data['customer']
+        owner = setup_data['owner']
+
+        cart = AbandonedCart.objects.create(
+            store=store,
+            customer=customer,
+            phone_or_email="09123334455",
+            total_amount=150000,
+            status=AbandonedCartStatus.PENDING,
+            created_at=timezone.now() - timezone.timedelta(hours=3)
+        )
+        # Update created_at to bypass auto_now_add in test
+        AbandonedCart.objects.filter(id=cart.id).update(created_at=timezone.now() - timezone.timedelta(hours=3))
+
+        client = APIClient()
+        client.force_authenticate(user=owner)
+
+        # 1. Unconfigured gateway does NOT stamp recovery_sms_sent_at and returns 400
+        with mock.patch('apps.features.adapters.SMSGateway.send_sms', return_value={'status': 'NOT_CONFIGURED', 'message': 'API key missing'}):
+            res_unconf = client.post(
+                f'/api/v1/marketing/abandoned-carts/{cart.id}/trigger-recovery/',
+                HTTP_X_STORE_ID=str(store.id)
+            )
+            assert res_unconf.status_code == status.HTTP_400_BAD_REQUEST
+            cart.refresh_from_db()
+            assert cart.delivery_status == RecoveryDeliveryStatus.NOT_CONFIGURED
+            assert cart.recovery_sms_sent_at is None
+
+        # 2. Failed gateway does NOT stamp recovery_sms_sent_at and returns 502
+        with mock.patch('apps.features.adapters.SMSGateway.send_sms', return_value={'status': 'FAILED', 'error': 'Provider down'}):
+            res_fail = client.post(
+                f'/api/v1/marketing/abandoned-carts/{cart.id}/trigger-recovery/',
+                HTTP_X_STORE_ID=str(store.id)
+            )
+            assert res_fail.status_code == status.HTTP_502_BAD_GATEWAY
+            cart.refresh_from_db()
+            assert cart.delivery_status == RecoveryDeliveryStatus.FAILED
+            assert cart.recovery_sms_sent_at is None
+
+        # 3. Accepted gateway stamps recovery_sms_sent_at and returns 200
+        with mock.patch('apps.features.adapters.SMSGateway.send_sms', return_value={'status': 'ACCEPTED', 'message_id': 'ACK_999'}):
+            res_ok = client.post(
+                f'/api/v1/marketing/abandoned-carts/{cart.id}/trigger-recovery/',
+                HTTP_X_STORE_ID=str(store.id)
+            )
+            assert res_ok.status_code == status.HTTP_200_OK
+            cart.refresh_from_db()
+            assert cart.delivery_status == RecoveryDeliveryStatus.SENT
+            assert cart.recovery_sms_sent_at is not None
+

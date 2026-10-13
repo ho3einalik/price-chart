@@ -178,14 +178,17 @@ class TestFieldAndFeaturesRegression:
         client = APIClient()
         client.force_authenticate(user=owner)
 
-        # 1. Trigger recovery succeeds
-        res1 = client.post(
-            f'/api/v1/marketing/abandoned-carts/{cart.id}/trigger-recovery/',
-            HTTP_X_STORE_ID=str(store.id)
-        )
-        assert res1.status_code == status.HTTP_200_OK
-        cart.refresh_from_db()
-        assert cart.recovery_sms_sent_at is not None
+        from unittest import mock
+
+        # 1. Trigger recovery succeeds with accepted gateway response
+        with mock.patch('apps.features.adapters.SMSGateway.send_sms', return_value={'status': 'ACCEPTED', 'message_id': 'ack_123'}):
+            res1 = client.post(
+                f'/api/v1/marketing/abandoned-carts/{cart.id}/trigger-recovery/',
+                HTTP_X_STORE_ID=str(store.id)
+            )
+            assert res1.status_code == status.HTTP_200_OK
+            cart.refresh_from_db()
+            assert cart.recovery_sms_sent_at is not None
 
         # 2. Triggering recovery again within 2 hours is rejected by anti-spam cooldown
         res_cooldown = client.post(

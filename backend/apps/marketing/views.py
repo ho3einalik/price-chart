@@ -13,6 +13,7 @@ from .models import (
     ProductBundleItem,
     AbandonedCart,
     AbandonedCartStatus,
+    RecoveryDeliveryStatus,
     CustomerReferral,
     ReferralStatus,
     ProductRecommendation,
@@ -202,21 +203,54 @@ class AbandonedCartViewSet(viewsets.ModelViewSet):
             msg += f" کد تخفیف ویژه شما: {cart.recovery_coupon.code}"
 
         sms_res = sms_adapter.send_sms(to=target_phone, message=msg, store=cart.store)
-        if sms_res.get('status') == 'FAILED':
+        res_status = sms_res.get('status')
+
+        if res_status == 'ACCEPTED':
+            cart.delivery_status = RecoveryDeliveryStatus.SENT
+            cart.recovery_sms_sent_at = timezone.now()
+            cart.recovery_attempts += 1
+            cart.last_delivery_error = ''
+            cart.save(update_fields=['delivery_status', 'recovery_sms_sent_at', 'recovery_attempts', 'last_delivery_error'])
             return Response({
-                'error': f"ارسال پیامک با خطا مواجه شد: {sms_res.get('error', 'خطای درگاه پیامک')}",
-                'sms_status': sms_res.get('status')
+                'message': f"پیامک یادآوری با موفقیت توسط درگاه پذیرفته و به {target_phone} ارسال شد.",
+                'cart_id': str(cart.id),
+                'sent_at': cart.recovery_sms_sent_at,
+                'delivery_status': cart.delivery_status,
+                'sms_status': res_status
+            }, status=status.HTTP_200_OK)
+
+        elif res_status == 'SIMULATED':
+            cart.delivery_status = RecoveryDeliveryStatus.SIMULATED
+            cart.recovery_attempts += 1
+            cart.last_delivery_error = 'شبیه‌سازی تستی'
+            cart.save(update_fields=['delivery_status', 'recovery_attempts', 'last_delivery_error'])
+            return Response({
+                'message': 'ارسال پیامک در وضعیت شبیه‌سازی انجام شد.',
+                'cart_id': str(cart.id),
+                'delivery_status': cart.delivery_status,
+                'sms_status': res_status
+            }, status=status.HTTP_200_OK)
+
+        elif res_status == 'NOT_CONFIGURED':
+            cart.delivery_status = RecoveryDeliveryStatus.NOT_CONFIGURED
+            cart.last_delivery_error = sms_res.get('message', 'درگاه پیامک در سیستم تنظیم نشده است.')
+            cart.save(update_fields=['delivery_status', 'last_delivery_error'])
+            return Response({
+                'error': 'درگاه پیامک در سیستم تنظیم نشده است. لطفاً ابتدا درگاه را پیکربندی نمایید.',
+                'delivery_status': cart.delivery_status,
+                'sms_status': res_status
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        else:
+            cart.delivery_status = RecoveryDeliveryStatus.FAILED
+            cart.recovery_attempts += 1
+            cart.last_delivery_error = str(sms_res.get('error', 'خطای درگاه پیامک'))
+            cart.save(update_fields=['delivery_status', 'recovery_attempts', 'last_delivery_error'])
+            return Response({
+                'error': f"ارسال پیامک توسط درگاه با خطا مواجه شد: {cart.last_delivery_error}",
+                'delivery_status': cart.delivery_status,
+                'sms_status': res_status
             }, status=status.HTTP_502_BAD_GATEWAY)
-
-        cart.recovery_sms_sent_at = timezone.now()
-        cart.save(update_fields=['recovery_sms_sent_at'])
-
-        return Response({
-            'message': f"درخواست ارسال پیامک یادآوری به {target_phone} با موفقیت ثبت شد.",
-            'cart_id': str(cart.id),
-            'sent_at': cart.recovery_sms_sent_at,
-            'sms_status': sms_res.get('status')
-        })
 
 
 class CustomerReferralViewSet(viewsets.ModelViewSet):

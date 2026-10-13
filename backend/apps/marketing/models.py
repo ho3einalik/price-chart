@@ -179,6 +179,14 @@ class AbandonedCartStatus(models.TextChoices):
     EXPIRED = 'EXPIRED', 'منقضی شده'
 
 
+class RecoveryDeliveryStatus(models.TextChoices):
+    NOT_SENT = 'NOT_SENT', 'ارسال نشده'
+    SENT = 'SENT', 'ارسال موفق'
+    FAILED = 'FAILED', 'خطا در ارسال'
+    NOT_CONFIGURED = 'NOT_CONFIGURED', 'درگاه پیامک پیکربندی نشده'
+    SIMULATED = 'SIMULATED', 'شبیه‌سازی تستی'
+
+
 class AbandonedCart(TenantScopedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     customer = models.ForeignKey(Customer, on_delete=models.SET_NULL, null=True, blank=True, related_name='abandoned_carts')
@@ -188,6 +196,14 @@ class AbandonedCart(TenantScopedModel):
     status = models.CharField(max_length=20, choices=AbandonedCartStatus.choices, default=AbandonedCartStatus.PENDING)
     recovery_coupon = models.ForeignKey(Coupon, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="کوپن تخفیف اختصاصی بازیابی")
     recovery_sms_sent_at = models.DateTimeField(null=True, blank=True, verbose_name="زمان ارسال پیامک یادآوری")
+    delivery_status = models.CharField(
+        max_length=30,
+        choices=RecoveryDeliveryStatus.choices,
+        default=RecoveryDeliveryStatus.NOT_SENT,
+        verbose_name="وضعیت ارسال پیامک بازیابی"
+    )
+    recovery_attempts = models.PositiveIntegerField(default=0, verbose_name="تعداد دفعات تلاش برای ارسال")
+    last_delivery_error = models.CharField(max_length=255, blank=True, verbose_name="آخرین پیام یا خطای درگاه")
     recovered_at = models.DateTimeField(null=True, blank=True, verbose_name="زمان تکمیل خرید")
 
     class Meta:
@@ -196,7 +212,7 @@ class AbandonedCart(TenantScopedModel):
         ordering = ['-created_at']
 
     def __str__(self):
-        return f"سبد رهاشده {self.phone_or_email} ({self.total_amount:,} تومان)"
+        return f"سبد رهاشده {self.phone_or_email} ({self.total_amount:,} تومان) - {self.get_delivery_status_display()}"
 
 
 class ReferralStatus(models.TextChoices):

@@ -325,3 +325,8 @@ class IntegrationRegistry:
 def get_integration_adapter(name: str):
     return IntegrationRegistry.get_adapter(name)
 
+
+# Aliases for backward compatibility and test mock targeting
+SMSGateway = SMSGatewayIntegrationAdapter
+SMSAdapter = SMSGatewayIntegrationAdapter
+

@@ -12,6 +12,7 @@ router = DefaultRouter()
 router.register(r'accounts', SocialAccountViewSet, basename='social-account')
 router.register(r'campaigns', SocialCampaignViewSet, basename='social-campaign')
 router.register(r'content', SocialContentViewSet, basename='social-content')
+router.register(r'contents', SocialContentViewSet, basename='social-contents')
 
 urlpatterns = [
     path('analytics/summary/', SocialAnalyticsView.as_view(), name='social-analytics-summary'),
