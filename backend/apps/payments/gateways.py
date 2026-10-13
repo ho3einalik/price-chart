@@ -10,6 +10,42 @@ from typing import Dict, Any, Optional
 logger = logging.getLogger(__name__)
 
 
+from rest_framework.exceptions import ValidationError
+
+
+def validate_and_convert_to_gateway_amount(amount: Decimal, currency: str = 'IRT') -> int:
+    """
+    Converts given amount to canonical integer Tomans required by Iranian payment gateways.
+    Enforces lower bound (min 1,000 Tomans / 10,000 Rials) and upper bound (max 50,000,000 Tomans).
+    """
+    if amount is None:
+        raise ValidationError("مبلغ تراکنش نمی‌تواند خالی باشد.")
+
+    curr = (currency or 'IRT').strip().upper()
+    try:
+        dec_amount = Decimal(str(amount))
+    except Exception:
+        raise ValidationError("فرمت مبلغ پرداختی نامعتبر است.")
+
+    if curr in ('IRR', 'RIAL', 'RIALS'):
+        # 1 Toman = 10 Rials
+        toman_val = int(dec_amount // Decimal(10))
+    elif curr in ('IRT', 'TOMAN', 'TOMANS'):
+        toman_val = int(dec_amount)
+    else:
+        toman_val = int(dec_amount)
+
+    if toman_val < 1000:
+        raise ValidationError(
+            f"حداقل مبلغ قابل پرداخت از طریق درگاه ۱,۰۰۰ تومان (۱۰,۰۰۰ ریال) است. مبلغ فعلی: {toman_val} تومان"
+        )
+    if toman_val > 50000000:
+        raise ValidationError(
+            f"مبلغ پرداختی ({toman_val:,} تومان) بیش از سقف مجاز پرداخت آنلاین در هر تراکنش (۵۰,۰۰۰,۰۰۰ تومان) است."
+        )
+    return toman_val
+
+
 class GatewayPaymentResult:
     def __init__(self, success: bool, status: str, tracking_code: str = "", message: str = "", raw_response: Optional[Dict[str, Any]] = None):
         self.success = success
@@ -32,12 +68,12 @@ class BasePaymentGateway(ABC):
     gateway_name: str = ""
 
     @abstractmethod
-    def request_payment(self, amount: Decimal, callback_url: str, description: str, order_id: str, store=None) -> Dict[str, Any]:
+    def request_payment(self, amount: Decimal, callback_url: str, description: str, order_id: str, store=None, currency: str = 'IRT') -> Dict[str, Any]:
         """Initiate payment request with the gateway"""
         pass
 
     @abstractmethod
-    def verify_payment(self, authority: str, amount: Decimal, store=None) -> GatewayPaymentResult:
+    def verify_payment(self, authority: str, amount: Decimal, store=None, currency: str = 'IRT') -> GatewayPaymentResult:
         """Server-to-server payment verification"""
         pass
 
@@ -56,7 +92,7 @@ class ZarinpalGatewayAdapter(BasePaymentGateway):
     def _is_sandbox(self) -> bool:
         return os.environ.get('ZARINPAL_SANDBOX', 'False').lower() in ('true', '1', 't')
 
-    def request_payment(self, amount: Decimal, callback_url: str, description: str, order_id: str, store=None) -> Dict[str, Any]:
+    def request_payment(self, amount: Decimal, callback_url: str, description: str, order_id: str, store=None, currency: str = 'IRT') -> Dict[str, Any]:
         merchant_id = self._get_merchant_id(store)
         if not merchant_id:
             return {
@@ -65,16 +101,26 @@ class ZarinpalGatewayAdapter(BasePaymentGateway):
                 'message': 'مرچنت زرین‌پال در تنظیمات فروشگاه یا متغیرهای سیستمی پیکربندی نشده است.'
             }
 
+        try:
+            gateway_amount = validate_and_convert_to_gateway_amount(amount, currency)
+        except ValidationError as e:
+            return {
+                'success': False,
+                'status': 'INVALID_AMOUNT',
+                'message': str(e.detail[0]) if hasattr(e, 'detail') and isinstance(e.detail, list) else str(e)
+            }
+
         prefix = "sandbox" if self._is_sandbox() else "www"
         url = f"https://{prefix}.zarinpal.com/pg/rest/WebGate/PaymentRequest.json"
 
         payload = {
             'MerchantID': merchant_id,
-            'Amount': int(amount),
+            'Amount': gateway_amount,
             'CallbackURL': callback_url,
             'Description': description,
             'Metadata': {'order_id': order_id}
         }
+
 
         try:
             req = urllib.request.Request(
@@ -109,7 +155,7 @@ class ZarinpalGatewayAdapter(BasePaymentGateway):
                 'message': f"خطا در برقراری ارتباط با زرین‌پال: {str(e)}"
             }
 
-    def verify_payment(self, authority: str, amount: Decimal, store=None) -> GatewayPaymentResult:
+    def verify_payment(self, authority: str, amount: Decimal, store=None, currency: str = 'IRT') -> GatewayPaymentResult:
         merchant_id = self._get_merchant_id(store)
         if not merchant_id:
             return GatewayPaymentResult(
@@ -118,13 +164,23 @@ class ZarinpalGatewayAdapter(BasePaymentGateway):
                 message='مرچنت زرین‌پال در تنظیمات فروشگاه یا متغیرهای سیستمی پیکربندی نشده است.'
             )
 
+        try:
+            gateway_amount = validate_and_convert_to_gateway_amount(amount, currency)
+        except ValidationError as e:
+            return GatewayPaymentResult(
+                success=False,
+                status='INVALID_AMOUNT',
+                message=str(e.detail[0]) if hasattr(e, 'detail') and isinstance(e.detail, list) else str(e)
+            )
+
         prefix = "sandbox" if self._is_sandbox() else "www"
         url = f"https://{prefix}.zarinpal.com/pg/rest/WebGate/PaymentVerification.json"
         payload = {
             'MerchantID': merchant_id,
             'Authority': authority,
-            'Amount': int(amount)
+            'Amount': gateway_amount
         }
+
 
         try:
             req = urllib.request.Request(

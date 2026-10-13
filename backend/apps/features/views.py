@@ -119,23 +119,121 @@ class SubscriptionInvoiceListView(APIView):
         serializer = CreateInvoiceInputSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         tier = serializer.validated_data['tier']
+        billing_cycle = serializer.validated_data.get('billing_cycle', 'MONTHLY')
 
-        prices = {
-            SubscriptionTier.FREE: Decimal('0'),
-            SubscriptionTier.STARTER: Decimal('290000'),
-            SubscriptionTier.PRO: Decimal('590000'),
-            SubscriptionTier.ENTERPRISE: Decimal('1490000'),
-        }
-        amount = prices.get(tier, Decimal('0'))
-
-        invoice = SubscriptionInvoice.objects.create(
+        from .services import SubscriptionPaymentService
+        invoice = SubscriptionPaymentService.create_subscription_invoice(
             store=store,
             tier=tier,
-            amount=amount,
-            status=InvoiceStatus.PAID if amount == 0 else InvoiceStatus.PENDING,
-            payment_reference=f"INV-REF-{uuid.uuid4().hex[:12].upper()}"
+            billing_cycle=billing_cycle
         )
         return Response(SubscriptionInvoiceSerializer(invoice).data, status=status.HTTP_201_CREATED)
+
+
+class SubscriptionInvoiceCheckoutView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsStoreAdminOrOwnerPermission]
+
+    def post(self, request, pk):
+        store = get_request_store(request)
+        try:
+            invoice = SubscriptionInvoice.objects.get(id=pk, store=store)
+        except (SubscriptionInvoice.DoesNotExist, ValueError):
+            return Response({'error': 'صورتحساب یافت نشد.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = CheckoutInvoiceInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        callback_url = serializer.validated_data.get('callback_url') or request.build_absolute_uri('/api/v1/features/invoices/verify/')
+        gateway_name = serializer.validated_data.get('gateway', 'zarinpal')
+
+        from .services import SubscriptionPaymentService
+        res = SubscriptionPaymentService.initiate_subscription_payment(
+            invoice=invoice,
+            store=store,
+            callback_url=callback_url,
+            gateway_name=gateway_name
+        )
+
+        if not res.get('success'):
+            status_code = status.HTTP_400_BAD_REQUEST if res.get('status') in ['REQUIRES_GATEWAY_CONFIG', 'INVALID_AMOUNT'] else status.HTTP_502_BAD_GATEWAY
+            return Response(res, status=status_code)
+
+        return Response({
+            'success': True,
+            'invoice_id': str(invoice.id),
+            'authority': res.get('authority'),
+            'payment_url': res.get('payment_url'),
+            'amount': invoice.amount
+        }, status=status.HTTP_200_OK)
+
+
+class SubscriptionInvoiceVerifyView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        return self._handle_verify(request)
+
+    def post(self, request):
+        return self._handle_verify(request)
+
+    def _handle_verify(self, request):
+        authority = (
+            request.data.get('authority')
+            or request.data.get('Authority')
+            or request.query_params.get('Authority')
+            or request.query_params.get('authority')
+        )
+        gateway_name = request.data.get('gateway', 'zarinpal')
+
+        if not authority:
+            return Response({'error': 'شناسه Authority درگاه ارسال نشده است.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from .services import SubscriptionPaymentService
+        success, invoice, message = SubscriptionPaymentService.verify_subscription_payment(
+            authority=authority,
+            gateway_name=gateway_name
+        )
+
+        if success:
+            return Response({
+                'success': True,
+                'message': message,
+                'tracking_code': invoice.gateway_tracking_code,
+                'invoice': SubscriptionInvoiceSerializer(invoice).data
+            }, status=status.HTTP_200_OK)
+        else:
+            return Response({
+                'success': False,
+                'error': message,
+                'invoice': SubscriptionInvoiceSerializer(invoice).data if invoice else None
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SubscriptionInvoiceManualApproveView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        if not (request.user.is_staff or request.user.is_superuser):
+            raise PermissionDenied("تنها مدیران ارشد سامانه مجاز به تأیید دستی صورتحساب اشتراک هستند.")
+
+        serializer = ManualApproveInvoiceInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        from .services import SubscriptionPaymentService
+        try:
+            invoice = SubscriptionPaymentService.admin_manual_override_invoice(
+                invoice_id=pk,
+                actor=request.user,
+                reason=serializer.validated_data['reason'],
+                tracking_code=serializer.validated_data.get('tracking_code', '')
+            )
+        except SubscriptionInvoice.DoesNotExist:
+            return Response({'error': 'صورتحساب یافت نشد.'}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response({
+            'message': f"صورتحساب با موفقیت توسط مدیر سامانه تأیید شد و پلن فروشگاه ارتقا یافت.",
+            'invoice': SubscriptionInvoiceSerializer(invoice).data
+        }, status=status.HTTP_200_OK)
 
 
 class SubscriptionInvoicePayView(APIView):
@@ -151,21 +249,45 @@ class SubscriptionInvoicePayView(APIView):
         if invoice.status == InvoiceStatus.PAID:
             return Response({'message': 'این صورتحساب قبلاً پرداخت شده است.'}, status=status.HTTP_200_OK)
 
-        tracking_code = request.data.get('tracking_code', f"TRK-{uuid.uuid4().hex[:8].upper()}")
-        invoice.status = InvoiceStatus.PAID
-        invoice.paid_at = timezone.now()
-        invoice.gateway_tracking_code = tracking_code
-        invoice.save()
+        # Free tier invoices can be activated directly
+        if invoice.amount == Decimal('0') or invoice.tier == SubscriptionTier.FREE:
+            from .services import SubscriptionPaymentService
+            invoice.status = InvoiceStatus.PAID
+            invoice.paid_at = timezone.now()
+            invoice.save()
+            SubscriptionPaymentService.apply_paid_subscription_invoice(invoice)
+            return Response({
+                'message': 'پلن رایگان با موفقیت فعال شد.',
+                'invoice': SubscriptionInvoiceSerializer(invoice).data
+            })
 
-        # Automatically upgrade store feature settings tier
-        settings = FeatureService.get_or_create_settings(store)
-        settings.tier = invoice.tier
-        settings.save()
+        # Disallow arbitrary client string approvals for paid tiers!
+        if request.user.is_staff or request.user.is_superuser:
+            reason = request.data.get('reason')
+            if not reason:
+                return Response(
+                    {'error': 'برای تأیید دستی صورتحساب‌های مالی توسط مدیر، ذکر پارامتر reason الزامی است.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            from .services import SubscriptionPaymentService
+            invoice = SubscriptionPaymentService.admin_manual_override_invoice(
+                invoice_id=pk,
+                actor=request.user,
+                reason=reason,
+                tracking_code=request.data.get('tracking_code', '')
+            )
+            return Response({
+                'message': f"صورتحساب توسط مدیر سامانه با موفقیت تأیید شد.",
+                'invoice': SubscriptionInvoiceSerializer(invoice).data
+            })
 
-        return Response({
-            'message': f"صورتحساب با موفقیت پرداخت شد و پلن فروشگاه به {invoice.get_tier_display()} ارتقا یافت.",
-            'invoice': SubscriptionInvoiceSerializer(invoice).data
-        })
+        return Response(
+            {
+                'error': 'امکان ثبت پرداخت ساختگی بدون استعلام درگاه بانکی وجود ندارد. لطفاً از طریق درگاه پرداخت آنلاین (/checkout/) پرداخت را انجام دهید.'
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
 
 
 class IntegrationListView(APIView):

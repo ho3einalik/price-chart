@@ -93,25 +93,52 @@ class PaymentTransactionViewSet(viewsets.ModelViewSet):
         )
         return Response(PaymentTransactionSerializer(rejected).data, status=status.HTTP_200_OK)
 
+    @action(detail=True, methods=['post'])
+    def refund(self, request, pk=None):
+        membership = getattr(request, 'membership', None)
+        if not (request.user.is_superuser or (membership and (membership.role in [Role.OWNER, Role.ADMIN, Role.BUSINESS_MANAGER] or user_has_store_permission(membership, 'payments.verify')))):
+            return Response({'detail': 'شما مجوز استرداد تراکنش‌های مالی را ندارید.'}, status=status.HTTP_403_FORBIDDEN)
+
+        payment = self.get_object()
+        amount = request.data.get('amount')
+        reason = request.data.get('reason', '')
+
+        from .services import process_payment_refund
+        try:
+            refunded = process_payment_refund(payment=payment, amount=amount, reason=reason, user=request.user)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(PaymentTransactionSerializer(refunded).data, status=status.HTTP_200_OK)
+
     @action(detail=False, methods=['post'], url_path='online-checkout')
     def online_checkout(self, request):
-        """Initiates online payment gateway checkout (e.g. Zarinpal)"""
+        """Initiates online payment gateway checkout (e.g. Zarinpal) without holding open DB transactions during network calls"""
         order_id = request.data.get('order_id')
         callback_url = request.data.get('callback_url', '')
         gateway_name = request.data.get('gateway', 'zarinpal')
-
         store = request.store
-        try:
-            order = Order.objects.select_for_update().get(id=order_id, store=store)
-        except (Order.DoesNotExist, ValueError):
-            return Response({'error': 'سفارش یافت نشد.'}, status=status.HTTP_404_NOT_FOUND)
 
-        verified_sum = sum(
-            p.amount for p in order.payments.filter(status=PaymentVerificationStatus.VERIFIED)
-        )
-        remaining_payable = max(Decimal('0'), order.grand_total - verified_sum)
-        if remaining_payable <= 0:
-            return Response({'error': 'این سفارش قبلاً به طور کامل تسویه شده است.'}, status=status.HTTP_400_BAD_REQUEST)
+        # 1. Short atomic lock to validate order and calculate remaining payable
+        with transaction.atomic():
+            try:
+                order = Order.objects.select_for_update().get(id=order_id, store=store)
+            except (Order.DoesNotExist, ValueError):
+                return Response({'error': 'سفارش یافت نشد.'}, status=status.HTTP_404_NOT_FOUND)
+
+            verified_sum = sum(
+                p.amount for p in order.payments.filter(status=PaymentVerificationStatus.VERIFIED)
+            )
+            remaining_payable = max(Decimal('0'), order.grand_total - verified_sum)
+            if remaining_payable <= 0:
+                return Response({'error': 'این سفارش قبلاً به طور کامل تسویه شده است.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            order_number = order.order_number
+            order_currency = order.currency
+            order_pk = str(order.id)
+
+        # 2. Callback URL allowlisting & safe resolution
+        safe_callback = self._resolve_safe_callback_url(request, callback_url)
 
         from .gateways import get_payment_gateway
         from .models import PaymentMethod
@@ -119,28 +146,39 @@ class PaymentTransactionViewSet(viewsets.ModelViewSet):
         if not gateway:
             return Response({'error': f'درگاه پرداخت {gateway_name} پشتیبانی نمی‌شود.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        desc = f"پرداخت سفارش {order.order_number} در فروشگاه {store.name}"
+        # 3. Gateway network call OUTSIDE of database transaction
+        desc = f"پرداخت سفارش {order_number} در فروشگاه {store.name}"
         result = gateway.request_payment(
             amount=remaining_payable,
-            callback_url=callback_url,
+            callback_url=safe_callback,
             description=desc,
-            order_id=str(order.id),
-            store=store
+            order_id=order_pk,
+            store=store,
+            currency=order_currency
         )
 
         if not result.get('success'):
-            status_code = status.HTTP_400_BAD_REQUEST if result.get('status') == 'REQUIRES_GATEWAY_CONFIG' else status.HTTP_502_BAD_GATEWAY
+            status_code = status.HTTP_400_BAD_REQUEST if result.get('status') in ['REQUIRES_GATEWAY_CONFIG', 'INVALID_AMOUNT'] else status.HTTP_502_BAD_GATEWAY
             return Response(result, status=status_code)
 
-        payment = PaymentTransaction.objects.create(
-            store=store,
-            order=order,
-            method=PaymentMethod.ONLINE_GATEWAY,
-            amount=remaining_payable,
-            currency=order.currency,
-            reference_number=result.get('authority', ''),
-            status=PaymentVerificationStatus.PENDING_VERIFICATION
-        )
+        # 4. Short atomic lock to persist the pending payment transaction
+        with transaction.atomic():
+            ref_order = Order.objects.select_for_update().get(id=order_id, store=store)
+            curr_verified = sum(
+                p.amount for p in ref_order.payments.filter(status=PaymentVerificationStatus.VERIFIED)
+            )
+            if curr_verified >= ref_order.grand_total:
+                return Response({'error': 'سفارش همزمان توسط تراکنش دیگری تسویه شد.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            payment = PaymentTransaction.objects.create(
+                store=store,
+                order=ref_order,
+                method=PaymentMethod.ONLINE_GATEWAY,
+                amount=remaining_payable,
+                currency=order_currency,
+                reference_number=result.get('authority', ''),
+                status=PaymentVerificationStatus.PENDING_VERIFICATION
+            )
 
         return Response({
             'payment_id': str(payment.id),
@@ -149,10 +187,36 @@ class PaymentTransactionViewSet(viewsets.ModelViewSet):
             'amount': remaining_payable
         }, status=status.HTTP_200_OK)
 
-    @action(detail=False, methods=['post'], url_path='online-verify')
+    def _resolve_safe_callback_url(self, request, callback_url: str) -> str:
+        fallback = request.build_absolute_uri('/api/v1/payments/online-verify/')
+        if not callback_url:
+            return fallback
+
+        from urllib.parse import urlparse
+        from django.conf import settings
+        parsed = urlparse(callback_url)
+        if not parsed.netloc:
+            return fallback
+
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        allowed_origins = list(getattr(settings, 'CORS_ALLOWED_ORIGINS', []))
+        trusted_origins = list(getattr(settings, 'CSRF_TRUSTED_ORIGINS', []))
+        current_host = request.get_host()
+
+        if parsed.netloc == current_host or origin in allowed_origins or origin in trusted_origins:
+            return callback_url
+
+        return fallback
+
+    @action(detail=False, methods=['get', 'post'], url_path='online-verify')
     def online_verify(self, request):
-        """Verifies online payment callback with the payment gateway"""
-        authority = request.data.get('authority') or request.query_params.get('Authority')
+        """Verifies online payment callback with the payment gateway idempotently"""
+        authority = (
+            request.data.get('authority')
+            or request.data.get('Authority')
+            or request.query_params.get('Authority')
+            or request.query_params.get('authority')
+        )
         gateway_name = request.data.get('gateway', 'zarinpal')
 
         if not authority:
@@ -161,23 +225,39 @@ class PaymentTransactionViewSet(viewsets.ModelViewSet):
         store = request.store
         payment = PaymentTransaction.objects.filter(
             store=store,
-            reference_number=authority,
-            status=PaymentVerificationStatus.PENDING_VERIFICATION
+            reference_number=authority
         ).first()
 
         if not payment:
-            return Response({'error': 'تراکنش در انتظار برای این شناسه ارجاع یافت نشد.'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'error': 'تراکنش برای این شناسه ارجاع یافت نشد.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if payment.status == PaymentVerificationStatus.VERIFIED:
+            return Response({
+                'success': True,
+                'message': 'تراکنش از قبل تأیید شده است.',
+                'tracking_code': payment.tracking_code,
+                'payment': PaymentTransactionSerializer(payment).data
+            }, status=status.HTTP_200_OK)
 
         from .gateways import get_payment_gateway
         gateway = get_payment_gateway(gateway_name)
         if not gateway:
             return Response({'error': 'درگاه پرداخت نامعتبر است.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        res = gateway.verify_payment(authority=authority, amount=payment.amount, store=store)
+        # Call gateway verify outside DB lock
+        res = gateway.verify_payment(
+            authority=authority,
+            amount=payment.amount,
+            store=store,
+            currency=payment.currency
+        )
         if res.success:
-            payment.tracking_code = res.tracking_code
-            payment.save(update_fields=['tracking_code'])
-            verified = verify_payment_transaction(payment=payment, user=request.user)
+            with transaction.atomic():
+                p = PaymentTransaction.objects.select_for_update().get(id=payment.id)
+                p.tracking_code = res.tracking_code
+                p.save(update_fields=['tracking_code'])
+                verified = verify_payment_transaction(payment=p, user=request.user if request.user.is_authenticated else None)
+
             return Response({
                 'success': True,
                 'message': res.message,
@@ -186,3 +266,4 @@ class PaymentTransactionViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_200_OK)
         else:
             return Response(res.to_dict(), status=status.HTTP_400_BAD_REQUEST)
+

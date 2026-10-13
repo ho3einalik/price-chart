@@ -8,6 +8,11 @@ class InsufficientStockError(Exception):
 
 @transaction.atomic
 def get_or_create_balance(store, warehouse, variant):
+    if warehouse.store_id != store.id:
+        raise ValidationError("انبار انتخابی متعلق به این فروشگاه نیست.")
+    if variant.product.store_id != store.id:
+        raise ValidationError("تنوع کالای انتخابی متعلق به این فروشگاه نیست.")
+
     balance, _ = InventoryBalance.objects.select_for_update().get_or_create(
         store=store,
         warehouse=warehouse,
@@ -20,6 +25,7 @@ def get_or_create_balance(store, warehouse, variant):
         }
     )
     return balance
+
 
 @transaction.atomic
 def reserve_stock(store, warehouse, variant, quantity, reference='', user=None):
@@ -117,6 +123,8 @@ def transfer_stock(store, source_warehouse, dest_warehouse, variant, quantity, r
         raise ValueError("تعداد انتقال باید بیشتر از صفر باشد.")
     if source_warehouse.id == dest_warehouse.id:
         raise ValueError("انبار مبدا و مقصد نمی‌تواند یکسان باشد.")
+    if source_warehouse.store_id != store.id or dest_warehouse.store_id != store.id:
+        raise ValidationError("انبارهای مبدا و مقصد باید متعلق به همین فروشگاه باشند.")
 
     src_balance = get_or_create_balance(store, source_warehouse, variant)
     if src_balance.available < quantity:
@@ -167,11 +175,15 @@ def transfer_stock(store, source_warehouse, dest_warehouse, variant, quantity, r
 @transaction.atomic
 def adjust_stock(store, warehouse, variant, new_on_hand, reason='', reference='', user=None):
     """Manual adjustment / stocktake reconciliation with audit trail"""
+    if new_on_hand < 0:
+        raise ValueError("موجودی فیزیکی جدید نمی‌تواند کمتر از صفر باشد.")
+
     balance = get_or_create_balance(store, warehouse, variant)
     old_on_hand = balance.on_hand_quantity
     diff = new_on_hand - old_on_hand
 
     balance.on_hand_quantity = new_on_hand
+
     balance.save()
 
     movement = InventoryMovement.objects.create(

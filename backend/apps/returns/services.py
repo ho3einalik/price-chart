@@ -16,16 +16,26 @@ def generate_rma_number():
     return f"RMA-{date_str}-{suffix}"
 
 from django.db.models import Sum
-from apps.orders.models import FulfillmentStatus, OrderStatus
+from apps.orders.models import Order, OrderItem, FulfillmentStatus, OrderStatus
 
 @transaction.atomic
 def create_return_request(order, items_data, customer_notes='', user=None):
     if not items_data:
         raise ValidationError("درخواست مرجوعی باید حداقل دارای یک ردیف کالا باشد.")
 
+    # Pessimistically lock Order to serialize return creations and status checks
+    order = Order.objects.select_for_update().get(id=order.id)
+
     # Validate that order has been fulfilled or partially fulfilled
     if order.fulfillment_status not in [FulfillmentStatus.FULFILLED, FulfillmentStatus.PARTIALLY_FULFILLED] and order.order_status not in [OrderStatus.FULFILLED, OrderStatus.COMPLETED]:
         raise ValidationError("تنها برای سفارش‌هایی که ارسال شده‌اند امکان ثبت مرجوعی وجود دارد.")
+
+    # Deadlock-free locking: collect unique order item IDs and lock in consistent sorted order
+    item_ids = sorted(list({item_data['order_item'].id for item_data in items_data}))
+    locked_items = {
+        item.id: item
+        for item in OrderItem.objects.select_for_update().filter(id__in=item_ids, order=order).order_by('id')
+    }
 
     rma_number = generate_rma_number()
     total_refund = Decimal('0')
@@ -43,14 +53,18 @@ def create_return_request(order, items_data, customer_notes='', user=None):
     )
 
     for item_data in items_data:
-        order_item = item_data['order_item']
+        raw_order_item = item_data['order_item']
+        order_item = locked_items.get(raw_order_item.id)
+        if not order_item:
+            raise ValidationError(f"ردیف کالای انتخابی ({raw_order_item.id}) متعلق به این سفارش نیست.")
+
         quantity = int(item_data['quantity'])
         reason = item_data.get('reason', 'CUSTOMER_REMORSE')
 
         if quantity <= 0:
             raise ValidationError("تعداد کالای مرجوعی باید بزرگتر از صفر باشد.")
 
-        # Calculate already returned quantity for this order item across all active RMAs
+        # Calculate already returned quantity for this order item across all active RMAs under row lock
         prior_returned = ReturnItem.objects.filter(
             order_item=order_item
         ).exclude(
@@ -90,6 +104,7 @@ def create_return_request(order, items_data, customer_notes='', user=None):
 
 @transaction.atomic
 def approve_return_request(rma, user=None, staff_notes=''):
+    rma = ReturnRequest.objects.select_for_update().get(id=rma.id)
     if rma.status != ReturnStatus.REQUESTED:
         raise ValidationError(f"تنها درخواست‌های جدید قابل تایید هستند. وضعیت فعلی: {rma.get_status_display()}")
 
@@ -114,8 +129,10 @@ def inspect_and_process_return(rma, inspection_items_data, warehouse, user=None,
     Final inspection of returned items and restocking to warehouse ledger.
     Connects to Finance RefundRecord to ensure refunds are tracked and not fabricated.
     """
+    rma = ReturnRequest.objects.select_for_update().get(id=rma.id)
     if rma.status in [ReturnStatus.COMPLETED, ReturnStatus.REJECTED]:
         raise ValidationError(f"این مرجوعی قبلاً نهایی شده است (وضعیت: {rma.get_status_display()})")
+
 
     items_dict = {str(item.id): item for item in rma.items.select_for_update()}
 

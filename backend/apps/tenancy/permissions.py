@@ -43,6 +43,13 @@ def get_request_store(request):
         ).first()
         if membership:
             store = membership.store
+        elif request.user.is_superuser or request.user.is_staff:
+            from .models import Store
+            store = Store.objects.filter(id=valid_uuid, is_active=True).first()
+            if not store:
+                request.store = None
+                request.membership = None
+                return None
         else:
             # Explicit store requested but user has no active membership in it -> fail-closed
             request.store = None
@@ -58,6 +65,9 @@ def get_request_store(request):
         ).order_by('created_at').first()
         if membership:
             store = membership.store
+        elif request.user.is_superuser or request.user.is_staff:
+            from .models import Store
+            store = Store.objects.filter(is_active=True).order_by('created_at').first()
 
     request.store = store
     request.membership = membership
@@ -117,24 +127,33 @@ class IsStoreMemberPermission(permissions.BasePermission):
     message = "دسترسی به این فروشگاه مجاز نیست، عضویت شما معلق است یا فروشگاه انتخاب نشده است."
 
     def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated):
+            return False
+        if request.user.is_superuser or request.user.is_staff:
+            return True
         store = get_request_store(request)
         membership = getattr(request, 'membership', None)
-        if not (request.user and request.user.is_authenticated and store and membership):
+        if not (store and membership):
             return False
         return bool(membership.is_active and membership.status == MembershipStatus.ACTIVE and store.is_active)
 
 class IsStoreAdminOrOwnerPermission(permissions.BasePermission):
-    """Requires user to be active OWNER, ADMIN, or BUSINESS_MANAGER of the active store"""
+    """Requires user to be active OWNER, ADMIN, or BUSINESS_MANAGER of the active store (or platform staff)"""
     message = "این عملیات نیازمند سطح دسترسی مدیر یا مالک فروشگاه است."
 
     def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated):
+            return False
+        if request.user.is_superuser or request.user.is_staff:
+            return True
         store = get_request_store(request)
         membership = getattr(request, 'membership', None)
-        if not (request.user and request.user.is_authenticated and store and membership):
+        if not (store and membership):
             return False
         if not (membership.is_active and membership.status == MembershipStatus.ACTIVE and store.is_active):
             return False
         return bool(membership.role in [Role.OWNER, Role.ADMIN, Role.BUSINESS_MANAGER])
+
 
 class HasStorePermission(permissions.BasePermission):
     """Verifies that the user's role or custom permissions include the required permission"""

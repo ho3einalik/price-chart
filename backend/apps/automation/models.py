@@ -12,6 +12,8 @@ class TriggerEvent(models.TextChoices):
     RETURN_REQUESTED = 'RETURN_REQUESTED', 'ثبت درخواست مرجوعی'
 
 class ExecutionStatus(models.TextChoices):
+    PENDING = 'PENDING', 'در انتظار اجرا'
+    RUNNING = 'RUNNING', 'در حال اجرا'
     SUCCESS = 'SUCCESS', 'موفق'
     FAILED = 'FAILED', 'خطا در اجرا'
     SKIPPED = 'SKIPPED', 'عدم انطباق شرایط (رد شد)'
@@ -43,6 +45,13 @@ class AutomationRule(TenantScopedModel):
 class AutomationExecutionLog(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     rule = models.ForeignKey(AutomationRule, on_delete=models.CASCADE, related_name='logs')
+    idempotency_key = models.CharField(
+        max_length=128,
+        blank=True,
+        null=True,
+        db_index=True,
+        verbose_name="کلید انحصار (Idempotency Key)"
+    )
     trigger_event = models.CharField(max_length=50, verbose_name="نوع رویداد")
     event_payload = models.JSONField(default=dict, verbose_name="داده‌های رویداد")
     status = models.CharField(
@@ -58,6 +67,14 @@ class AutomationExecutionLog(models.Model):
         verbose_name = 'لاگ اجرای اتوماسیون'
         verbose_name_plural = 'لاگ‌های اجرای اتوماسیون'
         ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['rule', 'idempotency_key'],
+                name='unique_rule_execution_idempotency',
+                condition=models.Q(idempotency_key__isnull=False)
+            )
+        ]
 
     def __str__(self):
         return f"Log: {self.rule.name} - {self.status} at {self.created_at}"
+

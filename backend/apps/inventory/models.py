@@ -35,6 +35,22 @@ class InventoryBalance(TenantScopedModel):
         verbose_name = 'موجودی انبار'
         verbose_name_plural = 'موجودی‌های انبار'
         unique_together = ('warehouse', 'variant')
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(on_hand_quantity__gte=0),
+                name='inventory_on_hand_non_negative'
+            ),
+            models.CheckConstraint(
+                condition=models.Q(reserved_quantity__gte=0),
+                name='inventory_reserved_non_negative'
+            ),
+            models.CheckConstraint(
+                condition=models.Q(quarantined_quantity__gte=0),
+                name='inventory_quarantined_non_negative'
+            ),
+        ]
+
+
 
     @property
     def available(self):

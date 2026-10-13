@@ -80,18 +80,49 @@ class SocialService:
 
     @staticmethod
     def submit_proof(content, proof_url='', proof_image_url='', user=None):
+        if not proof_url and not proof_image_url:
+            raise ValidationError("ارسال حداقل یکی از موارد آدرس لینک یا تصویر مدرک انتشار الزامی است.")
+
         content.proof_url = proof_url
         content.proof_image_url = proof_image_url
-        content.status = ContentStatus.PUBLISHED
-        content.published_at = timezone.now()
-        content.save(update_fields=['proof_url', 'proof_image_url', 'status', 'published_at', 'updated_at'])
+        content.status = ContentStatus.PENDING_PROOF_VERIFICATION
+        content.save(update_fields=['proof_url', 'proof_image_url', 'status', 'updated_at'])
+
+        reviewer = user or getattr(content, 'creator', None)
+        if reviewer:
+            ContentApprovalLog.objects.create(
+                content=content,
+                reviewer=reviewer,
+                action=ApprovalAction.SUBMITTED,
+                feedback="مدرک انتشار توسط کاربر ثبت شد و در انتظار تأیید مدیر قرار گرفت."
+            )
         return content
 
+
     @staticmethod
-    def verify_proof(content, manager_user):
-        content.approved_by = manager_user
-        content.save(update_fields=['approved_by', 'updated_at'])
+    def verify_proof(content, manager_user, approved=True, notes=''):
+        if approved:
+            content.status = ContentStatus.PUBLISHED
+            content.published_at = timezone.now()
+            content.approved_by = manager_user
+            content.save(update_fields=['status', 'published_at', 'approved_by', 'updated_at'])
+            ContentApprovalLog.objects.create(
+                content=content,
+                reviewer=manager_user,
+                action=ApprovalAction.APPROVED,
+                feedback=notes or "مدرک انتشار توسط مدیر تأیید شد و پست منتشر شده اعلام گردید."
+            )
+        else:
+            content.status = ContentStatus.REJECTED
+            content.save(update_fields=['status', 'updated_at'])
+            ContentApprovalLog.objects.create(
+                content=content,
+                reviewer=manager_user,
+                action=ApprovalAction.REJECTED,
+                feedback=notes or "مدرک انتشار رد شد."
+            )
         return content
+
 
     @staticmethod
     def record_metrics(content, metrics_data, source=MetricSource.MANUAL, user=None):

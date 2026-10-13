@@ -80,3 +80,55 @@ def reject_payment_transaction(payment, reason, user):
         changes={'order_number': order.order_number, 'reason': reason}
     )
     return payment
+
+
+@transaction.atomic
+def process_payment_refund(payment, amount=None, reason="", user=None):
+    """
+    Safely and idempotently refunds a verified payment transaction.
+    Pessimistically locks PaymentTransaction and Order to prevent over-refunds.
+    """
+    from rest_framework.exceptions import ValidationError
+    payment = PaymentTransaction.objects.select_for_update().get(id=payment.id)
+    if payment.status != PaymentVerificationStatus.VERIFIED:
+        raise ValidationError("تنها تراکنش‌های تأییدشده قابل استرداد (ریفاند) هستند.")
+
+    order = Order.objects.select_for_update().get(id=payment.order_id)
+    refund_amount = Decimal(str(amount)) if amount is not None else payment.amount
+
+    if refund_amount <= 0:
+        raise ValidationError("مبلغ استرداد باید بزرگتر از صفر باشد.")
+
+    if refund_amount > payment.amount:
+        raise ValidationError(
+            f"مبلغ درخواستی برای استرداد ({refund_amount}) نمی‌تواند از مبلغ تراکنش ({payment.amount}) بیشتر باشد."
+        )
+
+    # Calculate remaining verified across order excluding this one
+    remaining_verified = sum(
+        p.amount for p in order.payments.filter(status=PaymentVerificationStatus.VERIFIED).exclude(id=payment.id)
+    )
+
+    payment.status = PaymentVerificationStatus.REFUNDED
+    payment.rejection_reason = f"مسترد شده: {reason}" if reason else "مسترد شده توسط کاربر"
+    payment.save(update_fields=['status', 'rejection_reason', 'updated_at'])
+
+    # Recalculate order payment status
+    if remaining_verified == 0:
+        order.payment_status = PaymentStatus.REFUNDED
+    elif remaining_verified < order.grand_total:
+        order.payment_status = PaymentStatus.PARTIALLY_PAID
+    else:
+        order.payment_status = PaymentStatus.PAID
+    order.save(update_fields=['payment_status', 'updated_at'])
+
+    record_audit_event(
+        store=payment.store,
+        user=user,
+        action="PAYMENT_REFUNDED",
+        target_type="PaymentTransaction",
+        target_id=str(payment.id),
+        changes={'order_number': order.order_number, 'refund_amount': str(refund_amount), 'reason': reason}
+    )
+    return payment
+

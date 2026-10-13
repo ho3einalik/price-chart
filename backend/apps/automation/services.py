@@ -97,60 +97,75 @@ def sanitize_payload(payload):
     return sanitized
 
 
-def trigger_automation(store, trigger_event, payload):
-    """Trigger all active rules matching the event for a store"""
+from django.db import transaction, IntegrityError
+
+
+def trigger_automation(store, trigger_event, payload, dry_run=False):
+    """Trigger all active rules matching the event for a store with atomic idempotency claims"""
     rules = AutomationRule.objects.filter(store=store, trigger=trigger_event, is_active=True)
     executed_count = 0
     sanitized_data = sanitize_payload(payload)
 
     for rule in rules:
-        # Idempotency check: if payload has idempotency_key or event_id, prevent duplicate rule execution
-        event_key = payload.get('idempotency_key') or payload.get('event_id')
-        if event_key:
-            already_executed = AutomationExecutionLog.objects.filter(
-                rule=rule,
-                status=ExecutionStatus.SUCCESS,
-                event_payload__event_id=event_key
-            ).exists() or AutomationExecutionLog.objects.filter(
-                rule=rule,
-                status=ExecutionStatus.SUCCESS,
-                event_payload__idempotency_key=event_key
-            ).exists()
-            if already_executed:
-                continue
-
         matches = evaluate_conditions(rule.conditions, payload)
+        event_key = payload.get('idempotency_key') or payload.get('event_id')
+
         if not matches:
-            AutomationExecutionLog.objects.create(
+            if not dry_run:
+                AutomationExecutionLog.objects.create(
+                    rule=rule,
+                    idempotency_key=f"skipped-{event_key}" if event_key else None,
+                    trigger_event=trigger_event,
+                    event_payload=sanitized_data,
+                    status=ExecutionStatus.SKIPPED,
+                    details="شرایط قانون با داده‌های رویداد مطابقت نداشت."
+                )
+            continue
+
+        if dry_run:
+            execute_actions(rule, rule.actions, payload, dry_run=True)
+            executed_count += 1
+            continue
+
+        # Atomic claim under concurrency
+        log_entry = None
+        if event_key:
+            try:
+                with transaction.atomic():
+                    log_entry = AutomationExecutionLog.objects.create(
+                        rule=rule,
+                        idempotency_key=str(event_key),
+                        trigger_event=trigger_event,
+                        event_payload=sanitized_data,
+                        status=ExecutionStatus.RUNNING,
+                        details="در حال اجرای اقدامات..."
+                    )
+            except IntegrityError:
+                # Concurrent worker already claimed or completed this rule for this idempotency key
+                continue
+        else:
+            log_entry = AutomationExecutionLog.objects.create(
                 rule=rule,
                 trigger_event=trigger_event,
                 event_payload=sanitized_data,
-                status=ExecutionStatus.SKIPPED,
-                details="شرایط قانون با داده‌های رویداد مطابقت نداشت."
+                status=ExecutionStatus.RUNNING,
+                details="در حال اجرای اقدامات..."
             )
-            continue
 
         try:
-            details = execute_actions(rule, rule.actions, payload)
+            details = execute_actions(rule, rule.actions, payload, dry_run=False)
             rule.execution_count += 1
             rule.last_executed_at = timezone.now()
             rule.save(update_fields=['execution_count', 'last_executed_at'])
 
-            AutomationExecutionLog.objects.create(
-                rule=rule,
-                trigger_event=trigger_event,
-                event_payload=sanitized_data,
-                status=ExecutionStatus.SUCCESS,
-                details=details
-            )
+            log_entry.status = ExecutionStatus.SUCCESS
+            log_entry.details = details
+            log_entry.save(update_fields=['status', 'details'])
             executed_count += 1
         except Exception as e:
-            AutomationExecutionLog.objects.create(
-                rule=rule,
-                trigger_event=trigger_event,
-                event_payload=sanitized_data,
-                status=ExecutionStatus.FAILED,
-                details=f"خطا در اجرای اقدامات: {str(e)}"
-            )
+            log_entry.status = ExecutionStatus.FAILED
+            log_entry.details = f"خطا در اجرای اقدامات: {str(e)}"
+            log_entry.save(update_fields=['status', 'details'])
 
     return executed_count
+

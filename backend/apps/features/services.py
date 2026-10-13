@@ -1,6 +1,10 @@
 import logging
+from decimal import Decimal
+from django.utils import timezone
 from typing import Dict, Any, Tuple, Optional, List
 from rest_framework.exceptions import ValidationError, PermissionDenied
+
+
 
 from .models import StoreFeatureSetting, SubscriptionTier, IntegrationState
 from .registry import (
@@ -266,3 +270,186 @@ class FeatureService:
             })
 
         return statuses
+
+
+from .models import SubscriptionInvoice, InvoiceStatus
+from apps.payments.gateways import get_payment_gateway
+from django.db import transaction
+import uuid
+
+SUBSCRIPTION_TIER_PRICES = {
+    SubscriptionTier.FREE: Decimal('0'),
+    SubscriptionTier.STARTER: Decimal('290000'),
+    SubscriptionTier.PRO: Decimal('590000'),
+    SubscriptionTier.ENTERPRISE: Decimal('1490000'),
+}
+
+
+class SubscriptionPaymentService:
+    @staticmethod
+    def get_tier_price(tier: str, billing_cycle: str = 'MONTHLY') -> Decimal:
+        base_price = SUBSCRIPTION_TIER_PRICES.get(tier, Decimal('0'))
+        if billing_cycle == 'ANNUAL':
+            return base_price * Decimal('10')
+        return base_price
+
+    @classmethod
+    def create_subscription_invoice(cls, store, tier: str, billing_cycle: str = 'MONTHLY') -> SubscriptionInvoice:
+        amount = cls.get_tier_price(tier, billing_cycle)
+        ref = f"INV-REF-{uuid.uuid4().hex[:12].upper()}"
+
+        if amount == Decimal('0') or tier == SubscriptionTier.FREE:
+            invoice = SubscriptionInvoice.objects.create(
+                store=store,
+                tier=tier,
+                amount=amount,
+                billing_cycle=billing_cycle,
+                status=InvoiceStatus.PAID,
+                payment_reference=ref,
+                paid_at=timezone.now()
+            )
+            cls.apply_paid_subscription_invoice(invoice)
+            return invoice
+
+        invoice = SubscriptionInvoice.objects.create(
+            store=store,
+            tier=tier,
+            amount=amount,
+            billing_cycle=billing_cycle,
+            status=InvoiceStatus.PENDING,
+            payment_reference=ref
+        )
+        return invoice
+
+    @classmethod
+    def initiate_subscription_payment(cls, invoice: SubscriptionInvoice, store, callback_url: str, gateway_name: str = 'zarinpal') -> Dict[str, Any]:
+        if invoice.store_id != store.id:
+            raise ValidationError("این صورتحساب متعلق به این فروشگاه نیست.")
+        if invoice.status == InvoiceStatus.PAID:
+            raise ValidationError("این صورتحساب قبلاً تسویه شده است.")
+        if invoice.amount <= 0:
+            cls.apply_paid_subscription_invoice(invoice)
+            return {'success': True, 'message': 'پلن رایگان فعال شد.'}
+
+        gateway = get_payment_gateway(gateway_name)
+        if not gateway:
+            raise ValidationError(f"درگاه پرداخت '{gateway_name}' در سامانه موجود نیست.")
+
+        desc = f"اشتراک {invoice.get_tier_display()} برای فروشگاه {store.name} (شناسه: {invoice.payment_reference})"
+
+        res = gateway.request_payment(
+            amount=invoice.amount,
+            callback_url=callback_url,
+            description=desc,
+            order_id=str(invoice.id),
+            store=store,
+            currency='IRT'
+        )
+
+        if not res.get('success'):
+            return res
+
+        authority = res.get('authority', '')
+        with transaction.atomic():
+            inv = SubscriptionInvoice.objects.select_for_update().get(id=invoice.id)
+            inv.authority = authority
+            inv.gateway = gateway_name
+            inv.payment_attempt_at = timezone.now()
+            inv.save(update_fields=['authority', 'gateway', 'payment_attempt_at'])
+
+        return res
+
+    @classmethod
+    def verify_subscription_payment(cls, authority: str, store=None, gateway_name: str = 'zarinpal') -> Tuple[bool, SubscriptionInvoice, str]:
+        if not authority:
+            raise ValidationError("شناسه ارجاع authority الزامی است.")
+
+        with transaction.atomic():
+            qs = SubscriptionInvoice.objects.select_for_update().filter(authority=authority)
+            if store:
+                qs = qs.filter(store=store)
+            invoice = qs.first()
+
+            if not invoice:
+                raise ValidationError("صورتحسابی برای این شناسه ارجاع درگاه یافت نشد.")
+
+            if invoice.status == InvoiceStatus.PAID:
+                return True, invoice, "این صورتحساب قبلاً پرداخت و فعال شده است."
+
+            gateway = get_payment_gateway(invoice.gateway or gateway_name)
+            if not gateway:
+                raise ValidationError("درگاه پرداخت پشتیبانی نمی‌شود.")
+
+            verify_res = gateway.verify_payment(
+                authority=authority,
+                amount=invoice.amount,
+                store=invoice.store,
+                currency='IRT'
+            )
+
+            if verify_res.success:
+                invoice.status = InvoiceStatus.PAID
+                invoice.paid_at = timezone.now()
+                invoice.gateway_tracking_code = verify_res.tracking_code
+                invoice.metadata['gateway_verification'] = verify_res.raw_response
+                invoice.save()
+                cls.apply_paid_subscription_invoice(invoice)
+                return True, invoice, verify_res.message
+            else:
+                invoice.status = InvoiceStatus.FAILED
+                invoice.metadata['gateway_error'] = verify_res.raw_response
+                invoice.save()
+                return False, invoice, verify_res.message
+
+    @classmethod
+    def admin_manual_override_invoice(cls, invoice_id, actor, reason: str, tracking_code: str = "") -> SubscriptionInvoice:
+        if not (actor and (actor.is_staff or actor.is_superuser)):
+            raise PermissionDenied("تنها مدیران ارشد پلتفرم مجاز به تأیید دستی صورتحساب اشتراک هستند.")
+        if not reason or len(reason.strip()) < 5:
+            raise ValidationError("ذکر دلیل معتبر و مستند برای تأیید دستی صورتحساب الزامی است.")
+
+        with transaction.atomic():
+            invoice = SubscriptionInvoice.objects.select_for_update().get(id=invoice_id)
+            if invoice.status == InvoiceStatus.PAID:
+                return invoice
+
+            invoice.status = InvoiceStatus.PAID
+            invoice.paid_at = timezone.now()
+            invoice.gateway_tracking_code = tracking_code or f"MANUAL-ADMIN-{actor.id}-{uuid.uuid4().hex[:6].upper()}"
+            invoice.metadata['manual_override'] = {
+                'approved_by_id': str(actor.id),
+                'approved_by': getattr(actor, 'username', str(actor)),
+                'reason': reason,
+                'at': timezone.now().isoformat()
+            }
+            invoice.save()
+            cls.apply_paid_subscription_invoice(invoice)
+
+            record_audit_event(
+                store=invoice.store,
+                user=actor,
+                action="SUBSCRIPTION_MANUAL_OVERRIDE",
+                target_type="SubscriptionInvoice",
+                target_id=str(invoice.id),
+                changes={'tier': invoice.tier, 'reason': reason, 'amount': str(invoice.amount)}
+            )
+            return invoice
+
+    @classmethod
+    def apply_paid_subscription_invoice(cls, invoice: SubscriptionInvoice):
+        """Authoritatively upgrades the store's feature settings to the invoice's tier"""
+        settings = FeatureService.get_or_create_settings(invoice.store)
+        old_tier = settings.tier
+        settings.tier = invoice.tier
+        settings.save(update_fields=['tier', 'updated_at'])
+
+        record_audit_event(
+            store=invoice.store,
+            user=None,
+            action="SUBSCRIPTION_TIER_UPGRADED",
+            target_type="StoreFeatureSetting",
+            target_id=str(settings.id),
+            changes={'old_tier': old_tier, 'new_tier': settings.tier, 'invoice_id': str(invoice.id)}
+        )
+        return settings
+

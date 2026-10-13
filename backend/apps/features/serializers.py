@@ -39,16 +39,34 @@ from .models import SubscriptionInvoice, InvoiceStatus
 class SubscriptionInvoiceSerializer(serializers.ModelSerializer):
     tier_display = serializers.CharField(source='get_tier_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
+    billing_cycle_display = serializers.CharField(source='get_billing_cycle_display', read_only=True)
 
     class Meta:
         model = SubscriptionInvoice
         fields = [
-            'id', 'store', 'tier', 'tier_display', 'amount', 'status',
-            'status_display', 'payment_reference', 'gateway_tracking_code',
-            'created_at', 'paid_at'
+            'id', 'store', 'tier', 'tier_display', 'amount', 'billing_cycle',
+            'billing_cycle_display', 'status', 'status_display', 'payment_reference',
+            'authority', 'gateway', 'gateway_tracking_code', 'created_at', 'paid_at'
         ]
-        read_only_fields = ['id', 'store', 'status', 'created_at', 'paid_at']
+        read_only_fields = ['id', 'store', 'status', 'authority', 'gateway_tracking_code', 'created_at', 'paid_at']
 
 
 class CreateInvoiceInputSerializer(serializers.Serializer):
     tier = serializers.ChoiceField(choices=SubscriptionTier.choices)
+    billing_cycle = serializers.CharField(required=False, default='MONTHLY')
+
+
+class CheckoutInvoiceInputSerializer(serializers.Serializer):
+    callback_url = serializers.CharField(required=False, allow_blank=True, default='')
+    gateway = serializers.CharField(required=False, default='zarinpal')
+
+
+class VerifyInvoiceInputSerializer(serializers.Serializer):
+    authority = serializers.CharField(required=False, allow_blank=True, default='')
+    gateway = serializers.CharField(required=False, default='zarinpal')
+
+
+class ManualApproveInvoiceInputSerializer(serializers.Serializer):
+    reason = serializers.CharField(required=True, min_length=5, help_text="ذکر دلیل تأیید دستی الزامی است.")
+    tracking_code = serializers.CharField(required=False, allow_blank=True, default='')
+

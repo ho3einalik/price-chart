@@ -111,9 +111,11 @@ class ContentStatus(models.TextChoices):
     READY_FOR_REVIEW = 'READY_FOR_REVIEW', 'در انتظار بازبینی و تأیید'
     APPROVED = 'APPROVED', 'تأیید شده'
     SCHEDULED = 'SCHEDULED', 'زمان‌بندی شده برای انتشار'
+    PENDING_PROOF_VERIFICATION = 'PENDING_PROOF_VERIFICATION', 'در انتظار بررسی مدرک انتشار'
     PUBLISHED = 'PUBLISHED', 'منتشر شده'
     REJECTED = 'REJECTED', 'رد شده / نیازمند اصلاح'
     ARCHIVED = 'ARCHIVED', 'بایگانی شده'
+
 
 
 class PublishingMode(models.TextChoices):

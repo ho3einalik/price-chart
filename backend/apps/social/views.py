@@ -217,8 +217,18 @@ class SocialContentViewSet(viewsets.ModelViewSet):
         membership = getattr(request, 'membership', None)
         if not user_has_store_permission(membership, 'content.publish'):
             raise PermissionDenied("فقط مدیر یا ادمین ارشد مجاز به تأیید نهایی مدارک انتشار محتوا است.")
-        updated = SocialService.verify_proof(content=content, manager_user=request.user)
+        approved = request.data.get('approved', True)
+        if isinstance(approved, str):
+            approved = approved.lower() in ['true', '1', 'yes']
+        notes = request.data.get('notes', '')
+        updated = SocialService.verify_proof(
+            content=content,
+            manager_user=request.user,
+            approved=approved,
+            notes=notes
+        )
         return Response(SocialContentDetailSerializer(updated).data)
+
 
     @action(detail=False, methods=['get'], url_path='calendar')
     def calendar(self, request):

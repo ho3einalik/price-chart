@@ -78,6 +78,11 @@ class InvoiceStatus(models.TextChoices):
     CANCELLED = 'CANCELLED', 'لغو شده'
 
 
+class BillingCycle(models.TextChoices):
+    MONTHLY = 'MONTHLY', 'ماهانه'
+    ANNUAL = 'ANNUAL', 'سالانه'
+
+
 class SubscriptionInvoice(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     store = models.ForeignKey(
@@ -96,6 +101,12 @@ class SubscriptionInvoice(models.Model):
         decimal_places=0,
         verbose_name="مبلغ پرداختی (تومان)"
     )
+    billing_cycle = models.CharField(
+        max_length=20,
+        choices=BillingCycle.choices,
+        default=BillingCycle.MONTHLY,
+        verbose_name="دوره صورتحساب"
+    )
     status = models.CharField(
         max_length=20,
         choices=InvoiceStatus.choices,
@@ -108,11 +119,33 @@ class SubscriptionInvoice(models.Model):
         null=True,
         verbose_name="شناسه ارجاع پرداخت"
     )
+    authority = models.CharField(
+        max_length=120,
+        blank=True,
+        null=True,
+        db_index=True,
+        verbose_name="شناسه ارجاع درگاه (Authority)"
+    )
+    gateway = models.CharField(
+        max_length=50,
+        default='zarinpal',
+        verbose_name="درگاه پرداخت"
+    )
     gateway_tracking_code = models.CharField(
         max_length=100,
         blank=True,
         null=True,
         verbose_name="کد رهگیری درگاه"
+    )
+    payment_attempt_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="زمان شروع درخواست پرداخت"
+    )
+    metadata = models.JSONField(
+        default=dict,
+        blank=True,
+        verbose_name="اطلاعات تکمیلی و لاگ تأیید"
     )
     created_at = models.DateTimeField(auto_now_add=True)
     paid_at = models.DateTimeField(null=True, blank=True)
@@ -124,3 +157,4 @@ class SubscriptionInvoice(models.Model):
 
     def __str__(self):
         return f"Invoice {self.id} - {self.store.name} - {self.tier} ({self.status})"
+
