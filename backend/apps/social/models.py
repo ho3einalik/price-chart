@@ -182,6 +182,16 @@ class SocialContent(TenantScopedModel):
     scheduled_at = models.DateTimeField(null=True, blank=True, db_index=True, verbose_name="زمان مقرر انتشار")
     published_at = models.DateTimeField(null=True, blank=True, verbose_name="زمان واقعی انتشار")
     published_url = models.CharField(max_length=500, blank=True, verbose_name="لینک مستقیم پست منتشر شده")
+    proof_url = models.CharField(max_length=500, blank=True, verbose_name="لینک مدرک انتشار")
+    proof_image_url = models.CharField(max_length=500, blank=True, verbose_name="تصویر اسکرین‌شات مدرک انتشار")
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='approved_social_contents',
+        verbose_name="مدیر تأییدکننده انتشار"
+    )
 
     related_product = models.ForeignKey(
         'catalog.Product',
@@ -262,6 +272,13 @@ class ContentMetricSnapshot(models.Model):
         choices=MetricSource.choices,
         default=MetricSource.MANUAL,
         verbose_name="منبع آمار"
+    )
+    recorded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        verbose_name="کاربر ثبت‌کننده آمار"
     )
     reach = models.PositiveIntegerField(default=0, verbose_name="بازدید یکتا (Reach)")
     impressions = models.PositiveIntegerField(default=0, verbose_name="کل دفعات نمایش (Impressions)")

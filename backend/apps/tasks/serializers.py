@@ -111,7 +111,7 @@ class TaskDetailSerializer(TaskListSerializer):
     checklist_items = TaskChecklistItemSerializer(many=True, read_only=True)
     comments = TaskCommentSerializer(many=True, read_only=True)
     activity_logs = TaskActivityLogSerializer(many=True, read_only=True)
-    related_product_title = serializers.CharField(source='related_product.title', read_only=True, default=None)
+    related_product_title = serializers.CharField(source='related_product.name', read_only=True, default=None)
     related_order_number = serializers.CharField(source='related_order.order_number', read_only=True, default=None)
 
     class Meta(TaskListSerializer.Meta):

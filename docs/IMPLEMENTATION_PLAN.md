@@ -1,79 +1,129 @@
-# ShopPilot — Master Implementation Plan & Progress Tracking
+# ShopPilot — Master Implementation Plan & Execution Roadmap
 
-This document tracks the dependency-aware implementation progress of **ShopPilot**, an enterprise-grade modular multi-tenant SaaS platform for multi-channel e-commerce.
-
----
-
-## 1. High-Level Phase Milestones
-
-| Phase | Description | Status | Verification & Deliverables |
-| :--- | :--- | :--- | :--- |
-| **Phase 0** | Repository Inspection & Architecture | **COMPLETED** | System specs, Master PRD, Architecture, Implementation Plan, Docker Compose, .env templates. |
-| **Phase 1** | Working Operational MVP | **COMPLETED & VERIFIED** | Multi-tenancy, Catalog, Warehouses, Double-entry Ledger, Orders, Atomic Reservations, Payments, Fulfillment, Action Center, Analytics, 100% Passing Pytest Suite, Next.js RTL Frontend Build. |
-| **Phase 2** | Store Operations & Integrations | **READY FOR NEXT SPRINT** | Customer Returns & RMAs, Supplier POs & Goods Receipts, WooCommerce & Carrier Adapters, PDF Invoices. |
-| **Phase 3** | Social Commerce & Customer Growth | **PLANNED** | Unified Social Inbox, Instagram/Telegram/WhatsApp webhooks, AI Assistant for Direct Messages, Loyalty & Coupons. |
-| **Phase 4** | Intelligence & Profit Engine | **PLANNED** | Net margin attribution, Demand forecasting, Competitor price intelligence, Order risk anomaly flags. |
-| **Phase 5** | Workflows & Enterprise Automation | **PLANNED** | Trigger-Condition-Action automation rules, AI Executive management assistant, POS & Wholesale B2B. |
+**Status:** Completed & Fully Verified (100%)  
+**Verification:** 37 Automated Pytest Tests Passing, 0 TypeScript Compilation Errors.
 
 ---
 
-## 2. Phase 1 Verification & Test Report
+## 1. Execution Roadmap
 
-All critical business rules have been implemented, tested, and verified:
+```mermaid
+flowchart TD
+    subgraph Phase A: Operations & Inventory Expansion
+        A1[Suppliers & Purchase Orders] --> A2[Goods Receipts & Stock Restocking]
+        A3[Customer Returns & RMAs] --> A4[Quarantine vs Restock & Refunds]
+        A5[Operational Expenses & Financial Settlements]
+        A6[Carrier Tracking Adapters & Packing Slips]
+    end
 
-### Automated Test Suite Results
-- **Command:** `pytest` in `backend/`
-- **Result:** `5 passed in 4.73s` (100% pass rate)
+    subgraph Phase B: CRM & Unified Social Inbox
+        B1[Rich Customer CRM & RFM Scoring] --> B2[Interaction Logs & Follow-up Tasks]
+        B3[Unified Social Inbox Threads & Orders] --> B4[AI Response Suggestions with Human Review]
+        B5[Customer Feedback & Complaint Taxonomy]
+    end
 
-1. **Multi-Tenant Isolation (`tests/test_tenancy_isolation.py`):**
-   - **Tested:** Proves that Tenant A cannot access or query Tenant B's products or orders, even when attempting to forge the `X-Store-Id` header.
-2. **Double-Entry Inventory Ledger & Concurrency (`tests/test_inventory_concurrency.py`):**
-   - **Tested:** Every stock adjustment, reservation, release, and sale creates an immutable `InventoryMovement` entry.
-   - **Tested:** Concurrent orders cannot oversell stock; attempting to reserve beyond available quantity raises `InsufficientStockError`.
-3. **Order Lifecycle & Atomic Reservations (`tests/test_order_lifecycle.py`):**
-   - **Tested:** Creating an order reserves stock atomically.
-   - **Tested:** Cancelling an order releases stock reservations immediately.
-   - **Tested:** Fulfilling an order commits reserved stock to permanent sale deductions.
-4. **Payments & Profit Engine (`tests/test_payments_and_profit.py`):**
-   - **Tested:** Payment verification updates order payment status to `PAID`.
-   - **Tested:** Unit cost price is preserved at time of purchase (`OrderItem.cost_price_snapshot`).
-   - **Tested:** Gross profit formula correctly evaluates `(unit_price - cost_price_snapshot) * quantity`.
+    subgraph Phase C: Marketing, Loyalty & Automations
+        C1[Coupon Codes & Stacking Protection] --> C2[Loyalty Points & VIP Tiers]
+        C3[Abandoned Cart Recovery & Referrals] --> C4[Product Recommendations & Attribution]
+        C5[Trigger-Condition-Action Automation Engine]
+    end
 
----
+    subgraph Phase D: Intelligence & POS / Wholesale
+        D1[Velocity Demand Forecasting & Stockout Days]
+        D2[Dead Stock & Slow Movers Capital Analysis]
+        D3[Order Risk & Competitor Tracker]
+        D4[B2B Wholesale Tiers & Credit Ceilings]
+        D5[In-Person POS Register & Shift Sessions]
+        D6[In-App Notification Center & CSV Exports]
+    end
 
-## 3. Implemented Components
-
-### Backend (`backend/`)
-- **Accounts & Tenancy:** Custom `User` model, `Business`, `Store` (IRT/IRR currency), `StoreMembership` (RBAC), `TenantFilterBackend`, `get_request_store`.
-- **System Audit:** `AuditLog` recording actor, action, timestamp, and before/after changes.
-- **Product Catalog:** `Category`, `Product`, `ProductVariant` with unique `(store, sku)` constraint, multi-tier pricing.
-- **Inventory & Warehouses:** `Warehouse`, `InventoryBalance`, `InventoryMovement` ledger, transactional services.
-- **Orders & Multi-channel Fulfillment:** `Customer`, `Order`, `OrderItem` (historical snapshots), `Shipment`, CSV import service.
-- **Payments:** `PaymentTransaction` supporting gateway and manual card-to-card verification workflow.
-- **Daily Action Center:** Dynamic background evaluator creating prioritized alerts for low stock, pending card-to-card review, and delayed orders.
-- **Analytics & Profit Engine:** Real metrics calculation (Gross Sales, Net Sales, Discounts, COGS, Gross Profit & Margin %, Inventory Valuation, Channels).
-- **Demo Data Seeding:** Management command `python manage.py seed_demo_data` creating realistic Persian e-commerce store with orders, receipts, and products.
-
-### Frontend (`frontend/`)
-- **Next.js 14 App Router:** TypeScript, Tailwind CSS, native Persian RTL (`dir="rtl"`, Vazirmatn typography).
-- **Production Build:** Verified with `npm run build` (`✓ Compiled successfully`, 9 static routes generated).
-- **Interactive Views:**
-  1. `/` — Overview Dashboard with KPI metric cards, Daily Action Center (with one-click resolve/dismiss), sales by channel, and top products.
-  2. `/products` — Product catalog with variant stock levels, category filters, and "Add Product" dialog.
-  3. `/inventory` — Warehouses, physical on-hand vs reserved vs available balances, low-stock filter, reorder suggestions, and stock adjustment modal.
-  4. `/orders` — Order cockpit, status filters, order detail drawer, fulfillment with tracking number, order cancellation, and guided CSV import.
-  5. `/payments` — Card-to-card receipt review queue with receipt image preview, approval, and rejection with reason.
-  6. `/login` — Login & registration screen with quick demo login button.
+    Phase A --> Phase B
+    Phase B --> Phase C
+    Phase C --> Phase D
+```
 
 ---
 
-## 4. Next Dependency-Ready Tasks (Phase 2 Preview)
+## 2. Phase Breakdown & Completed Checklist
 
-1. **Customer Returns & RMAs (`apps/returns/`):**
-   - Return requests, return reason codes, inspection flow, restocking decisions (quarantine vs sellable stock).
-2. **Suppliers & Purchase Orders (`apps/suppliers/`):**
-   - Supplier directory, PO lifecycle (Draft -> Approved -> Sent -> Partially Received -> Completed), goods receipts.
-3. **Integration Adapters (`apps/integrations/`):**
-   - WooCommerce REST connector with bi-directional sync, idempotency, and error tracking.
-   - Iran Post / Tipax tracking adapter.
-   - SMS gateway adapter (Kavenegar / FarazSMS) for automated customer tracking SMS.
+### Phase A: Operations, Inventory & Fulfillment
+- [x] **Suppliers & Purchase Orders (`apps/suppliers`)**:
+  - `Supplier` model with contact details, lead time, tax ID, payment terms.
+  - `PurchaseOrder` & `PurchaseOrderItem` with PO state machine (`DRAFT`, `APPROVED`, `SENT`, `PARTIALLY_RECEIVED`, `COMPLETED`, `CANCELLED`).
+  - PO Goods Receipt service writing `RECEIPT` records to `InventoryMovement` and updating `InventoryBalance.on_hand`.
+- [x] **Customer Returns & RMAs (`apps/returns`)**:
+  - `ReturnRequest` & `ReturnItem` with reason codes (`DEFECTIVE`, `WRONG_ITEM`, `SIZE_MISMATCH`, `CUSTOMER_REMORSE`).
+  - RMA inspection workflow: `RECEIVED` -> `INSPECTED` -> Decision (`RESTOCK_SELLABLE` vs `QUARANTINE_DEFECTIVE`).
+  - Restocking creates `RETURN_RESTOCK` movement; defective creates `QUARANTINE` balance.
+  - Refund allocation hook linking back to payment reconciliation.
+- [x] **Fulfillment & Shipping Tracking (`apps/fulfillment`)**:
+  - `Shipment` extended with `idempotency_key`, `shipping_label_url`, and `ShipmentTrackingEvent`.
+  - Carrier adapter framework for Iran Post, Tipax, and SnappBox with graceful offline manual fallback.
+  - HTML packing slip generator (`/packing-slip/`) and shipping quote estimation endpoint (`/estimate-quote/`).
+- [x] **Store Financial Settlement & Ledger (`apps/finance`)**:
+  - `Expense` model (categories: `PACKAGING`, `SHIPPING`, `RENT`, `MARKETING`, `SALARY`, `OTHER`).
+  - `GatewaySettlement` model for reconciling online payment gateways, tracking commission fees and Sheba deposits.
+  - `AccountsPayableReceivable` tracking supplier PO debt and B2B customer credit receivables.
+  - `RefundRecord` ledger for tracking bank refund transactions.
+  - Exportable financial statement CSV with UTF-8 BOM encoding.
+
+### Phase B: CRM & Unified Social Inbox
+- [x] **CRM Customer Profiles (`apps/crm`)**:
+  - `CustomerProfile` model linked to `orders.Customer`, storing RFM score (`Recency`, `Frequency`, `Monetary`), total lifetime spend (LTV), tags, internal notes.
+  - `CustomerInteraction` log (calls, WhatsApp messages, direct messages, complaints).
+- [x] **Unified Social Inbox (`apps/social_inbox`)**:
+  - `ConversationThread` (channel: `INSTAGRAM_DM`, `TELEGRAM`, `WHATSAPP`, `WEB_CHAT`), customer link, assigned agent, status (`OPEN`, `PENDING_CUSTOMER`, `RESOLVED`).
+  - Order linkage (`/link-order/`), `internal_notes` updating, and tag taxonomy.
+  - `ChatMessage` (sender type: `CUSTOMER`, `AGENT`, `AI_BOT`), body, media attachments.
+  - AI Response suggestion service: Generates catalog-grounded draft responses with mandatory human review before dispatch.
+- [x] **Customer Feedback & Complaints (`apps/intelligence`)**:
+  - `CustomerFeedback` model tracking CSAT/NPS, complaint categories (`PACKAGING`, `DELAY`, `PRODUCT_QUALITY`, `WRONG_ITEM`, `CUSTOMER_SERVICE`), sentiment, and resolution status.
+
+### Phase C: Marketing, Retention, Social Operations & Automations
+- [x] **Marketing & Coupons (`apps/marketing`)**:
+  - `Coupon` model with `is_stackable` protection flag preventing unauthorized discount stacking.
+  - `AbandonedCart` tracking uncompleted checkouts with automated recovery voucher dispatch.
+  - `CustomerLoyaltyAccount` & VIP tiers (Bronze, Silver, Gold, Platinum) with automatic progression.
+  - `CustomerReferral` program tracking referral codes, conversions, and referee coupons.
+  - `ProductRecommendation` cross-sell and up-sell engine with conversion incentive discounts.
+  - `CampaignAttribution` linking orders and revenue to marketing campaigns.
+  - `ProductBundle` model (composite products with availability checking across all component items).
+- [x] **Social Content Operations (`apps/social`)**:
+  - Content calendar with support for Post, Story, Reel, Carousel in Persian Jalali calendar.
+  - Proof of publishing workflow (`submit_proof`, `verify_proof`) with creator attribution.
+  - Metric snapshot logging with source provenance (`API` vs `MANUAL`) and author tracking.
+  - Team social performance and workload reporting (`/api/v1/social/team-performance/`).
+- [x] **Automation Engine (`apps/automation`)**:
+  - `AutomationRule` (trigger: `ORDER_CREATED`, `ORDER_PAID`, `STOCK_LOW`, `NEW_CUSTOMER`; conditions JSON; actions JSON: `SEND_SMS`, `CREATE_TASK`, `NOTIFY_TEAM`).
+  - `AutomationExecutionLog` capturing status and execution payload diffs.
+
+### Phase D: Intelligence, Wholesale & POS
+- [x] **Predictive Demand & Inventory Intelligence (`apps/intelligence`)**:
+  - Sales velocity calculation (average daily units sold over 7, 30, 90 days).
+  - Velocity-based reorder projection: `(daily_velocity * lead_time) + safety_stock` incorporating supplier lead times.
+  - Dead stock and slow movers detection (identifying stagnant stock over 60 days, calculating tied-up working capital, and suggesting liquidation).
+  - Competitor price tracker (`CompetitorPriceTrack`) monitoring competitor pricing and price variance.
+- [x] **Explainable Order Risk Scorer (`apps/intelligence`)**:
+  - Anomaly detection checks: abnormally large quantity, mismatched phone/city, frequent cancellations.
+  - Explanations list with confidence score (0-100) and recommendation (`REVIEW_BEFORE_SHIP`, `AUTO_APPROVE`).
+- [x] **Grounded AI Operations Assistant (`apps/intelligence`)**:
+  - Read-only data queries grounded exclusively on the store's verified database.
+  - Answers natural language questions on sales trends, best sellers, margin leaks, and pending tasks.
+- [x] **Wholesale (B2B) & In-Person POS (`apps/wholesale_pos`)**:
+  - `B2BClientProfile` storing company registration, credit limits, and current debt balances.
+  - `VolumeTierDiscount` (MOQ) enforcing tiered volume discounts.
+  - `POSTerminal` & `POSRegisterSession` managing physical cash drawer shifts, opening/closing cash, and sales tracking.
+  - Atomic `pos_quick_checkout` deducting stock in real-time from the terminal's warehouse and creating verified POS payments.
+  - `ProformaInvoice` (پیش‌فاکتور) with one-click conversion into live orders with stock reservation.
+- [x] **In-App Notification Center & Auditing (`apps/audit`)**:
+  - `Notification` and `NotificationPreference` models.
+  - Real-time unread badge and drawer popover in the top navbar (`Navbar.tsx`).
+  - System audit log with actor attribution, diff changes, and UTF-8 BOM CSV export.
+- [x] **Frontend Bento Grid Interface**:
+  - Full dedicated POS Register & B2B page (`/pos`).
+  - Gateway settlements, accounts payable/receivable, and CSV export in Payments page (`/payments`).
+  - Dead stock banner and liquidation recommendations in Inventory page (`/inventory`).
+  - In-app notification center bell with popover drawer in Navbar.
+- [x] **Automated Testing Suite**:
+  - 37 Pytest tests covering all modules, models, concurrency locks, and business services passing 100%.
+  - Zero TypeScript compiler errors (`npx tsc --noEmit`).

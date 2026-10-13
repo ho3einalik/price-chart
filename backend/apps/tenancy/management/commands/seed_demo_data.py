@@ -12,11 +12,23 @@ from apps.payments.models import PaymentTransaction, PaymentMethod, PaymentVerif
 from apps.payments.services import verify_payment_transaction
 from apps.fulfillment.models import Shipment, Carrier, ShipmentStatus
 from apps.daily_actions.services import sync_daily_actions_for_store
+from apps.suppliers.models import Supplier, PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatus
+from apps.returns.models import ReturnRequest, ReturnItem, ReturnStatus, RefundStatus, ReturnReason
+from apps.marketing.models import Coupon, DiscountType
+from apps.automation.models import AutomationRule, TriggerEvent
+from apps.crm.services import recalculate_all_store_customers
+import os
+from django.conf import settings
+from django.core.exceptions import CommandError
+from apps.social_inbox.models import ConversationThread, ChatMessage, ThreadChannel, ThreadStatus, SenderType
 
 class Command(BaseCommand):
     help = "Seeds comprehensive realistic demo data for ShopPilot (Persian e-commerce)"
 
     def handle(self, *args, **options):
+        if not settings.DEBUG and not os.environ.get('ALLOW_SEEDING_IN_PRODUCTION'):
+            raise CommandError("Seeding demo data is prohibited in production (DEBUG=False) unless ALLOW_SEEDING_IN_PRODUCTION is set.")
+
         self.stdout.write("Seeding ShopPilot demo data...")
 
         # 1. Create Demo User
@@ -25,8 +37,8 @@ class Command(BaseCommand):
             defaults={
                 'full_name': "مهندس علیرضا رضایی",
                 'phone_number': "09121112233",
-                'is_staff': True,
-                'is_superuser': True,
+                'is_staff': False,
+                'is_superuser': False,
             }
         )
         user.set_password("password123")
@@ -459,9 +471,152 @@ class Command(BaseCommand):
             }
         )
 
-        # 10. Sync Daily Actions
+        # 10. Suppliers & Purchase Orders
+        supp1, _ = Supplier.objects.get_or_create(
+            store=store,
+            name="تولیدی و بافندگی پارس مد",
+            defaults={
+                'contact_name': "مهندس اکبری",
+                'phone_number': "09121239988",
+                'email': "info@parsmod.ir",
+                'lead_time_days': 4,
+                'payment_terms': 'NET_30'
+            }
+        )
+
+        supp2, _ = Supplier.objects.get_or_create(
+            store=store,
+            name="چرم طبیعی تبریز فاخر",
+            defaults={
+                'contact_name': "حاج رضا تبریزی",
+                'phone_number': "09143334455",
+                'lead_time_days': 2,
+                'payment_terms': 'CASH'
+            }
+        )
+
+        po1, _ = PurchaseOrder.objects.get_or_create(
+            store=store,
+            po_number="PO-261012-001",
+            defaults={
+                'supplier': supp1,
+                'warehouse': wh_central,
+                'status': PurchaseOrderStatus.APPROVED,
+                'total_amount': Decimal('7500000'),
+                'expected_delivery_date': (now + timedelta(days=3)).date(),
+                'notes': 'تامین مانتو کتی بهاره'
+            }
+        )
+        sample_variant = ProductVariant.objects.filter(store=store).first()
+        if sample_variant:
+            PurchaseOrderItem.objects.get_or_create(
+                purchase_order=po1,
+                variant=sample_variant,
+                defaults={
+                    'quantity_ordered': 25,
+                    'quantity_received': 0,
+                    'unit_cost': Decimal('300000'),
+                    'total_cost': Decimal('7500000')
+                }
+            )
+
+        # 11. Customer Returns RMA
+        first_completed_order = Order.objects.filter(store=store, order_status=OrderStatus.COMPLETED).first()
+        if first_completed_order and first_completed_order.items.exists():
+            rma1, _ = ReturnRequest.objects.get_or_create(
+                store=store,
+                rma_number="RMA-261012-101",
+                defaults={
+                    'order': first_completed_order,
+                    'customer': first_completed_order.customer,
+                    'status': ReturnStatus.REQUESTED,
+                    'refund_status': RefundStatus.PENDING,
+                    'refund_amount': Decimal('450000'),
+                    'customer_notes': 'سایز برای من مقداری گشاد بود و تمایل به تعویض دارم.'
+                }
+            )
+            first_item = first_completed_order.items.first()
+            ReturnItem.objects.get_or_create(
+                return_request=rma1,
+                order_item=first_item,
+                variant=first_item.variant,
+                defaults={
+                    'quantity': 1,
+                    'reason': ReturnReason.SIZE_MISMATCH
+                }
+            )
+
+        # 12. Marketing Coupons
+        Coupon.objects.get_or_create(
+            store=store,
+            code="LOTUS20",
+            defaults={
+                'description': 'تخفیف ۲۰ درصدی به مناسبت جشنواره پاییزه',
+                'discount_type': DiscountType.PERCENTAGE,
+                'discount_value': Decimal('20'),
+                'min_order_amount': Decimal('300000'),
+                'max_discount_amount': Decimal('150000'),
+                'max_uses': 200,
+                'uses_count': 14,
+                'is_active': True
+            }
+        )
+        Coupon.objects.get_or_create(
+            store=store,
+            code="WELCOME50K",
+            defaults={
+                'description': '۵۰ هزار تومان هدیه اولین خرید',
+                'discount_type': DiscountType.FIXED_AMOUNT,
+                'discount_value': Decimal('50000'),
+                'min_order_amount': Decimal('250000'),
+                'max_uses': 0,
+                'uses_count': 32,
+                'is_active': True
+            }
+        )
+
+        # 13. Automation Rules
+        AutomationRule.objects.get_or_create(
+            store=store,
+            name="ارسال پیامک تایید سفارش و ثبت وظیفه بسته‌بندی",
+            defaults={
+                'trigger': TriggerEvent.ORDER_PAID,
+                'conditions': {},
+                'actions': [
+                    {'type': 'SEND_SMS', 'template': 'سفارش شما در فروشگاه لوتوس تایید شد.'},
+                    {'type': 'CREATE_TASK', 'title': 'آماده‌سازی و بسته‌بندی سفارش پرداختی', 'priority': 'HIGH'}
+                ],
+                'is_active': True,
+                'execution_count': 28
+            }
+        )
+
+        # 14. CRM RFM Calculation
+        recalculate_all_store_customers(store)
+
+        # 15. Unified Social Inbox Threads & Messages
+        thread1, _ = ConversationThread.objects.get_or_create(
+            store=store,
+            contact_handle="@shiva_tehrani",
+            defaults={
+                'channel': ThreadChannel.INSTAGRAM_DM,
+                'contact_name': 'شیوا تهرانی',
+                'status': ThreadStatus.OPEN,
+                'last_message_preview': 'سلام وقتتون بخیر، مانتو کتی کرم سایز S موجود دارید؟ ارسال به رشت چقدر طول می‌کشه؟'
+            }
+        )
+        ChatMessage.objects.get_or_create(
+            thread=thread1,
+            text='سلام وقتتون بخیر، مانتو کتی کرم سایز S موجود دارید؟ ارسال به رشت چقدر طول می‌کشه؟',
+            defaults={
+                'sender_type': SenderType.CUSTOMER
+            }
+        )
+
+        # 16. Sync Daily Actions
         sync_daily_actions_for_store(store)
 
         self.stdout.write(self.style.SUCCESS(f"Successfully seeded demo store ID: {store.id}"))
         self.stdout.write(self.style.SUCCESS("Demo credentials: demo@shoppilot.io / password123"))
+
 

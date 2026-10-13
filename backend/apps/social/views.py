@@ -193,9 +193,32 @@ class SocialContentViewSet(viewsets.ModelViewSet):
         snapshot = SocialService.record_metrics(
             content=content,
             metrics_data=input_serializer.validated_data,
-            source=input_serializer.validated_data.get('source', 'MANUAL')
+            source=input_serializer.validated_data.get('source', 'MANUAL'),
+            user=request.user
         )
         return Response(ContentMetricSnapshotSerializer(snapshot).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='submit-proof')
+    def submit_proof(self, request, pk=None):
+        content = self.get_object()
+        proof_url = request.data.get('proof_url', '')
+        proof_image_url = request.data.get('proof_image_url', '')
+        updated = SocialService.submit_proof(
+            content=content,
+            proof_url=proof_url,
+            proof_image_url=proof_image_url,
+            user=request.user
+        )
+        return Response(SocialContentDetailSerializer(updated).data)
+
+    @action(detail=True, methods=['post'], url_path='verify-proof')
+    def verify_proof(self, request, pk=None):
+        content = self.get_object()
+        membership = getattr(request, 'membership', None)
+        if not user_has_store_permission(membership, 'content.publish'):
+            raise PermissionDenied("فقط مدیر یا ادمین ارشد مجاز به تأیید نهایی مدارک انتشار محتوا است.")
+        updated = SocialService.verify_proof(content=content, manager_user=request.user)
+        return Response(SocialContentDetailSerializer(updated).data)
 
     @action(detail=False, methods=['get'], url_path='calendar')
     def calendar(self, request):
@@ -217,3 +240,13 @@ class SocialAnalyticsView(APIView):
         days = int(request.query_params.get('days', 30))
         data = SocialService.get_social_analytics_summary(store=store, days=days)
         return Response(data)
+
+
+class TeamSocialPerformanceView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsStoreMemberPermission]
+
+    def get(self, request):
+        store = get_request_store(request)
+        days = int(request.query_params.get('days', 30))
+        stats = SocialService.get_team_performance(store=store, days=days)
+        return Response(stats)

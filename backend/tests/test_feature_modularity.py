@@ -306,9 +306,10 @@ class TestFeatureModularityAndIsolation:
         })
         assert res_core_toggle.status_code == status.HTTP_400_BAD_REQUEST
 
-        # 5. Tier update endpoint
+        # 5. Tier update endpoint (with verified invoice reference)
         res_tier = owner_client.post('/api/v1/features/tier/', {
-            'tier': SubscriptionTier.ENTERPRISE
+            'tier': SubscriptionTier.ENTERPRISE,
+            'payment_reference': 'INV-SUB-PAID-001'
         })
         assert res_tier.status_code == status.HTTP_200_OK
         assert res_tier.json()['tier'] == SubscriptionTier.ENTERPRISE

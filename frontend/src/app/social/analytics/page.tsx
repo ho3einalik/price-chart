@@ -206,7 +206,7 @@ export default function SocialAnalyticsPage() {
               </h2>
 
               <div className="space-y-3">
-                {data.platforms.map((p) => (
+                {(data.platforms || []).map((p) => (
                   <div
                     key={p.account_id}
                     className="p-3 rounded-xl border border-slate-100 bg-slate-50/50 flex items-center justify-between text-xs"
@@ -283,7 +283,7 @@ export default function SocialAnalyticsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-slate-700">
-                  {data.top_posts.map((post, idx) => (
+                  {(data.top_posts || []).map((post, idx) => (
                     <tr key={post.id} className="hover:bg-slate-50/70">
                       <td className="py-3 px-4 font-bold text-slate-800 flex items-center gap-3">
                         <span className="w-5 h-5 rounded-full bg-slate-100 text-slate-600 font-black text-[10px] flex items-center justify-center">

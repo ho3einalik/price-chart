@@ -417,7 +417,7 @@ export default function FeaturesSettingsPage() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          {Object.entries(integrations).map(([name, integ]) => {
+          {Object.entries(integrations || {}).map(([name, integ]) => {
             const isInstagram = name === 'instagram';
             const isAI = name === 'ai_provider';
             const isSMS = name === 'sms_gateway';

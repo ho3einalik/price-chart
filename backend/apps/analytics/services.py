@@ -43,6 +43,16 @@ def calculate_store_overview_metrics(store, days=30):
 
     outstanding_amount = max(Decimal('0'), (totals['grand'] or Decimal('0')) - verified_payments_sum)
 
+    # Completed Refunds in the period
+    from apps.finance.models import RefundRecord
+    refunds_sum = RefundRecord.objects.filter(
+        store=store,
+        status='COMPLETED',
+        created_at__gte=start_date
+    ).aggregate(s=Sum('amount'))['s'] or Decimal('0')
+
+    net_sales_after_refunds = max(Decimal('0'), net_sales - refunds_sum)
+
     # AOV
     aov = int(net_sales / total_orders_count) if total_orders_count > 0 else 0
 
@@ -53,6 +63,7 @@ def calculate_store_overview_metrics(store, days=30):
     total_revenue_from_items = sum(item.total_price for item in order_items)
     total_cogs = sum(item.cost_price_snapshot * item.quantity for item in order_items)
     gross_profit = total_revenue_from_items - total_cogs
+    net_operating_profit = gross_profit - refunds_sum
     gross_profit_margin_pct = round((float(gross_profit) / float(total_revenue_from_items) * 100), 1) if total_revenue_from_items > 0 else 0.0
 
     # Inventory Valuation
@@ -112,6 +123,8 @@ def calculate_store_overview_metrics(store, days=30):
         'cancelled_orders_count': cancelled_orders_count,
         'average_order_value': aov,
         'gross_profit': int(gross_profit),
+        'refunds_amount': int(refunds_sum),
+        'net_operating_profit': int(net_operating_profit),
         'gross_profit_margin_pct': gross_profit_margin_pct,
         'inventory_valuation': int(total_inventory_cost_value),
         'inventory_units_on_hand': total_inventory_units_on_hand,

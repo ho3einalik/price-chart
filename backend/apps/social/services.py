@@ -77,7 +77,22 @@ class SocialService:
         return content
 
     @staticmethod
-    def record_metrics(content, metrics_data, source=MetricSource.MANUAL):
+    def submit_proof(content, proof_url='', proof_image_url='', user=None):
+        content.proof_url = proof_url
+        content.proof_image_url = proof_image_url
+        content.status = ContentStatus.PUBLISHED
+        content.published_at = timezone.now()
+        content.save(update_fields=['proof_url', 'proof_image_url', 'status', 'published_at', 'updated_at'])
+        return content
+
+    @staticmethod
+    def verify_proof(content, manager_user):
+        content.approved_by = manager_user
+        content.save(update_fields=['approved_by', 'updated_at'])
+        return content
+
+    @staticmethod
+    def record_metrics(content, metrics_data, source=MetricSource.MANUAL, user=None):
         reach = int(metrics_data.get('reach', 0))
         impressions = int(metrics_data.get('impressions', reach))
         likes = int(metrics_data.get('likes', 0))
@@ -91,6 +106,7 @@ class SocialService:
         snapshot = ContentMetricSnapshot.objects.create(
             content=content,
             source=source,
+            recorded_by=user,
             reach=reach,
             impressions=impressions,
             likes=likes,
@@ -173,3 +189,34 @@ class SocialService:
             'platforms': by_platform,
             'top_posts': top_posts
         }
+
+    @staticmethod
+    def get_team_performance(store, days=30):
+        cutoff_date = timezone.now() - timezone.timedelta(days=days)
+        members = store.memberships.select_related('user').all()
+        team_stats = []
+
+        for m in members:
+            assigned_contents = SocialContent.objects.filter(
+                store=store,
+                assignee=m.user,
+                created_at__gte=cutoff_date
+            )
+            published = assigned_contents.filter(status=ContentStatus.PUBLISHED).count()
+            total_reach = ContentMetricSnapshot.objects.filter(
+                content__in=assigned_contents
+            ).aggregate(total=Sum('reach'))['total'] or 0
+
+            team_stats.append({
+                'user_id': str(m.user.id),
+                'full_name': m.user.get_full_name() or m.user.email,
+                'role': m.role,
+                'role_display': m.get_role_display(),
+                'total_assigned_contents': assigned_contents.count(),
+                'published_contents': published,
+                'completion_rate_percent': round((published / assigned_contents.count() * 100) if assigned_contents.count() > 0 else 100.0, 1),
+                'generated_reach': total_reach
+            })
+
+        return team_stats
+

@@ -13,12 +13,17 @@ class SubscriptionTier(models.TextChoices):
 
 class IntegrationState(models.TextChoices):
     CONNECTED = 'CONNECTED', 'متصل و آماده به کار'
+    CONFIGURED = 'CONFIGURED', 'پیکربندی شده'
+    CONNECTION_TESTED = 'CONNECTION_TESTED', 'اتصال با موفقیت تست شده'
     NOT_CONFIGURED = 'NOT_CONFIGURED', 'پیکربندی‌نشده'
     DISABLED_BY_STORE = 'DISABLED_BY_STORE', 'غیرفعال توسط فروشگاه'
     PLAN_RESTRICTED = 'PLAN_RESTRICTED', 'نیازمند ارتقای اشتراک'
     UNAVAILABLE = 'UNAVAILABLE', 'موقتاً در دسترس نیست'
     NEEDS_REAUTH = 'NEEDS_REAUTH', 'نیازمند اتصال مجدد / انقضای توکن'
     FAILED_RECOVERY = 'FAILED_RECOVERY', 'خطای ارتباط - در انتظار بازیابی'
+    ERROR = 'ERROR', 'خطای ارتباط با سرویس'
+    MOCKED = 'MOCKED', 'شبیه‌سازی / حالت تستی'
+    MANUAL_ONLY = 'MANUAL_ONLY', 'فقط حالت دستی'
 
 
 class StoreFeatureSetting(models.Model):
@@ -32,7 +37,7 @@ class StoreFeatureSetting(models.Model):
     tier = models.CharField(
         max_length=30,
         choices=SubscriptionTier.choices,
-        default=SubscriptionTier.PRO,
+        default=SubscriptionTier.FREE,
         verbose_name="سطح اشتراک فروشگاه"
     )
     enabled_features = models.JSONField(

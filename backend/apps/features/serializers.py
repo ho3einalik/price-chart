@@ -25,6 +25,7 @@ class FeatureToggleInputSerializer(serializers.Serializer):
 
 class SubscriptionTierUpdateInputSerializer(serializers.Serializer):
     tier = serializers.ChoiceField(choices=SubscriptionTier.choices)
+    payment_reference = serializers.CharField(required=False, allow_blank=True, default='')
 
 
 class IntegrationConfigInputSerializer(serializers.Serializer):

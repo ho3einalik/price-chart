@@ -13,9 +13,10 @@ import {
   Layers,
   ChevronLeft,
   ChevronRight,
-  CheckCircle2,
-  X
+  X,
+  Sparkles
 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 interface SocialContent {
   id: string;
@@ -77,28 +78,76 @@ export default function SocialCalendarPage() {
     }
   };
 
-  // Generate 28 or 35 days for grid
+  // Month calculation
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
 
   const firstDayOfMonth = new Date(year, month, 1);
   const lastDayOfMonth = new Date(year, month + 1, 0);
 
-  // Persian week starts Saturday (index 6 in JS Sun=0..Sat=6)
-  // Let's compute day cells for the calendar
+  // Persian week starts Saturday (in JS getDay(): Sunday=0, Monday=1, ..., Saturday=6)
+  // Converting to Saturday=0, Sunday=1, ..., Friday=6
+  const startOffset = (firstDayOfMonth.getDay() + 1) % 7;
   const daysInMonth = lastDayOfMonth.getDate();
-  const calendarDays = [];
 
+  // Previous month trailing days
+  const prevMonthLastDay = new Date(year, month, 0).getDate();
+
+  interface CalCell {
+    date: Date;
+    dateStr: string;
+    dayNumber: number;
+    isCurrentMonth: boolean;
+    isToday: boolean;
+    items: SocialContent[];
+  }
+
+  const calendarCells: CalCell[] = [];
+
+  // Add trailing days from previous month
+  for (let i = startOffset - 1; i >= 0; i--) {
+    const d = new Date(year, month - 1, prevMonthLastDay - i);
+    const dateStr = d.toISOString().slice(0, 10);
+    const items = contents.filter((c) => c.scheduled_at && c.scheduled_at.startsWith(dateStr));
+    calendarCells.push({
+      date: d,
+      dateStr,
+      dayNumber: prevMonthLastDay - i,
+      isCurrentMonth: false,
+      isToday: false,
+      items,
+    });
+  }
+
+  // Add current month days
+  const todayStr = new Date().toISOString().slice(0, 10);
   for (let day = 1; day <= daysInMonth; day++) {
     const d = new Date(year, month, day);
     const dateStr = d.toISOString().slice(0, 10);
-    const dayItems = contents.filter((c) => c.scheduled_at && c.scheduled_at.startsWith(dateStr));
-    calendarDays.push({
+    const items = contents.filter((c) => c.scheduled_at && c.scheduled_at.startsWith(dateStr));
+    calendarCells.push({
       date: d,
       dateStr,
       dayNumber: day,
-      items: dayItems,
-      isToday: new Date().toISOString().slice(0, 10) === dateStr,
+      isCurrentMonth: true,
+      isToday: dateStr === todayStr,
+      items,
+    });
+  }
+
+  // Fill up remaining cells to complete grid row (multiple of 7)
+  const remaining = (7 - (calendarCells.length % 7)) % 7;
+  for (let day = 1; day <= remaining; day++) {
+    const d = new Date(year, month + 1, day);
+    const dateStr = d.toISOString().slice(0, 10);
+    const items = contents.filter((c) => c.scheduled_at && c.scheduled_at.startsWith(dateStr));
+    calendarCells.push({
+      date: d,
+      dateStr,
+      dayNumber: day,
+      isCurrentMonth: false,
+      isToday: false,
+      items,
     });
   }
 
@@ -136,56 +185,79 @@ export default function SocialCalendarPage() {
     }
   };
 
-  const getContentTypeIcon = (type: string) => {
+  const getContentTypeBadge = (type: string) => {
     switch (type) {
       case 'REEL':
-        return <Film className="w-3.5 h-3.5 text-pink-600" />;
+        return (
+          <span className="flex items-center gap-1 text-[10px] text-pink-400 font-bold bg-pink-500/15 border border-pink-500/25 px-1.5 py-0.5 rounded-md">
+            <Film className="w-3 h-3" />
+            <span>ریلز</span>
+          </span>
+        );
       case 'CAROUSEL':
-        return <Layers className="w-3.5 h-3.5 text-indigo-600" />;
+        return (
+          <span className="flex items-center gap-1 text-[10px] text-indigo-400 font-bold bg-indigo-500/15 border border-indigo-500/25 px-1.5 py-0.5 rounded-md">
+            <Layers className="w-3 h-3" />
+            <span>اسلایدی</span>
+          </span>
+        );
       case 'STORY':
-        return <Clock className="w-3.5 h-3.5 text-amber-600" />;
+        return (
+          <span className="flex items-center gap-1 text-[10px] text-amber-400 font-bold bg-amber-500/15 border border-amber-500/25 px-1.5 py-0.5 rounded-md">
+            <Clock className="w-3 h-3" />
+            <span>استوری</span>
+          </span>
+        );
       default:
-        return <Image className="w-3.5 h-3.5 text-sky-600" />;
+        return (
+          <span className="flex items-center gap-1 text-[10px] text-cyan-400 font-bold bg-cyan-500/15 border border-cyan-500/25 px-1.5 py-0.5 rounded-md">
+            <Image className="w-3 h-3" />
+            <span>پست</span>
+          </span>
+        );
     }
   };
 
   return (
-    <div className="space-y-6 animate-fadeIn">
+    <div className="space-y-6 max-w-7xl mx-auto">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-200 pb-5">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-black text-slate-800 flex items-center gap-3">
-            <CalendarIcon className="w-7 h-7 text-pink-600" />
-            تقویم محتوا و برنامه‌ریزی انتشار
-          </h1>
-          <p className="text-sm text-slate-500 mt-1">
-            برنامه‌ریزی منظم ریلزها، استوری‌ها و پست‌های اینستاگرام با تاییدیه‌های قبل از انتشار
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-black text-white tracking-tight">تقویم محتوا و رسانه‌ها</h1>
+            <span className="w-1.5 h-1.5 rounded-full bg-pink-500 animate-pulse" />
+          </div>
+          <p className="text-xs text-slate-400 mt-1">
+            برنامه‌ریزی منظم ریلزها، استوری‌ها و پست‌های اینستاگرام با تاییدیه‌های انتشار
           </p>
         </div>
+
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1 bg-white border border-slate-200 p-1 rounded-xl shadow-2xs">
+          {/* Month selector */}
+          <div className="flex items-center gap-1.5 bg-[#0e1628] border border-white/[0.08] p-1.5 rounded-2xl">
             <button
               onClick={() => setCurrentDate(new Date(year, month - 1, 1))}
-              className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-600"
+              className="p-1 hover:bg-white/[0.08] rounded-xl text-slate-300 hover:text-white transition-all cursor-pointer"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
-            <span className="px-3 text-xs font-bold text-slate-800">
+            <span className="px-3 text-xs font-bold text-white min-w-[100px] text-center">
               {currentDate.toLocaleDateString('fa-IR', { month: 'long', year: 'numeric' })}
             </span>
             <button
               onClick={() => setCurrentDate(new Date(year, month + 1, 1))}
-              className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-600"
+              className="p-1 hover:bg-white/[0.08] rounded-xl text-slate-300 hover:text-white transition-all cursor-pointer"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
           </div>
+
           <button
             onClick={() => handleOpenScheduleForDate(new Date().toISOString().slice(0, 10))}
-            className="flex items-center gap-2 bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-700 hover:to-purple-700 text-white px-4 py-2.5 rounded-xl font-medium shadow-sm transition-all text-sm"
+            className="flex items-center gap-2 bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white px-4 py-2.5 rounded-xl font-bold shadow-[0_0_18px_rgba(236,72,153,0.4)] transition-all text-xs cursor-pointer"
           >
             <Plus className="w-4 h-4" />
-            <span>زمان‌بندی محتوای جدید</span>
+            <span>زمان‌بندی محتوا</span>
           </button>
         </div>
       </div>
@@ -195,14 +267,14 @@ export default function SocialCalendarPage() {
         {accounts.map((acc) => (
           <div
             key={acc.id}
-            className="flex items-center gap-2.5 bg-white border border-slate-200 px-3.5 py-2 rounded-xl text-xs shadow-2xs"
+            className="flex items-center gap-2.5 glass-card px-3.5 py-2 text-xs"
           >
             {acc.platform === 'INSTAGRAM' ? (
-              <Instagram className="w-4 h-4 text-pink-600" />
+              <Instagram className="w-4 h-4 text-pink-400" />
             ) : (
-              <Send className="w-4 h-4 text-sky-500" />
+              <Send className="w-4 h-4 text-cyan-400" />
             )}
-            <span className="font-bold text-slate-800">{acc.handle}</span>
+            <span className="font-bold text-white">{acc.handle}</span>
             <span className="text-[11px] text-slate-400">
               ({acc.follower_count?.toLocaleString('fa-IR')} دنبال‌کننده)
             </span>
@@ -210,10 +282,10 @@ export default function SocialCalendarPage() {
         ))}
       </div>
 
-      {/* Calendar Grid */}
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+      {/* Calendar Grid Container */}
+      <div className="glass-card p-4 space-y-3">
         {/* Days of week header */}
-        <div className="grid grid-cols-7 text-center py-2.5 bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-600">
+        <div className="grid grid-cols-7 gap-2.5 text-center text-xs font-bold text-slate-400 py-1 border-b border-white/[0.06]">
           <div>شنبه</div>
           <div>یکشنبه</div>
           <div>دوشنبه</div>
@@ -223,52 +295,56 @@ export default function SocialCalendarPage() {
           <div>جمعه</div>
         </div>
 
-        {/* Days Grid */}
-        <div className="grid grid-cols-7 divide-x divide-y divide-slate-100 min-h-[600px]">
-          {calendarDays.map((calDay) => (
+        {/* Days Grid with perfect alignment */}
+        <div className="grid grid-cols-7 gap-2.5">
+          {calendarCells.map((calDay, idx) => (
             <div
-              key={calDay.dateStr}
+              key={idx}
               onClick={() => handleOpenScheduleForDate(calDay.dateStr)}
-              className={`p-2 flex flex-col justify-between hover:bg-slate-50/80 transition-colors cursor-pointer group min-h-[120px] ${
-                calDay.isToday ? 'bg-pink-50/30' : ''
-              }`}
+              className={cn(
+                'p-2.5 rounded-2xl border flex flex-col justify-between transition-all cursor-pointer group min-h-[110px]',
+                calDay.isToday
+                  ? 'bg-pink-600/[0.08] border-pink-500/40 shadow-[0_0_15px_rgba(236,72,153,0.15)]'
+                  : calDay.isCurrentMonth
+                  ? 'bg-white/[0.02] border-white/[0.06] hover:border-cyan-400/40 hover:bg-white/[0.05]'
+                  : 'bg-white/[0.005] border-transparent opacity-35 hover:opacity-70'
+              )}
             >
+              {/* Top of day cell */}
               <div className="flex items-center justify-between">
                 <span
-                  className={`text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center ${
-                    calDay.isToday ? 'bg-pink-600 text-white shadow-2xs' : 'text-slate-700'
-                  }`}
+                  className={cn(
+                    'text-xs font-mono font-bold w-6 h-6 rounded-full flex items-center justify-center transition-all',
+                    calDay.isToday
+                      ? 'bg-gradient-to-tr from-pink-600 to-purple-500 text-white shadow-[0_0_10px_rgba(236,72,153,0.7)]'
+                      : 'text-slate-300 group-hover:text-white'
+                  )}
                 >
                   {calDay.dayNumber}
                 </span>
-                <button className="opacity-0 group-hover:opacity-100 text-[10px] text-pink-600 font-bold transition-opacity">
-                  + زمان‌بندی
-                </button>
+
+                <span className="opacity-0 group-hover:opacity-100 text-[10px] text-pink-400 font-bold transition-opacity">
+                  + انتشار
+                </span>
               </div>
 
-              {/* Items on this day */}
+              {/* Items in day */}
               <div className="mt-2 space-y-1.5 flex-1">
-                {calDay.items.map((item) => (
+                {(calDay.items || []).map((item) => (
                   <div
                     key={item.id}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                    }}
-                    className={`p-1.5 rounded-lg border text-[11px] shadow-2xs flex items-start gap-1.5 ${
-                      item.status === 'PUBLISHED'
-                        ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-                        : item.status === 'SCHEDULED'
-                        ? 'bg-purple-50 border-purple-200 text-purple-900'
-                        : 'bg-white border-slate-200 text-slate-800'
-                    }`}
+                    onClick={(e) => e.stopPropagation()}
+                    className="p-1.5 rounded-xl bg-[#0f172a] border border-white/[0.08] text-[11px] space-y-1 shadow-sm hover:border-pink-500/40 transition-colors"
                   >
-                    <div className="mt-0.5 shrink-0">{getContentTypeIcon(item.content_type)}</div>
-                    <div className="truncate flex-1">
-                      <p className="font-bold truncate leading-tight">{item.title}</p>
-                      <span className="text-[9px] text-slate-500 block mt-0.5">
-                        {item.account_handle} • {item.content_type_display}
+                    <div className="flex items-center justify-between">
+                      {getContentTypeBadge(item.content_type)}
+                      <span className="text-[9px] text-slate-400 truncate max-w-[60px]">
+                        {item.account_handle}
                       </span>
                     </div>
+                    <p className="font-bold text-white truncate text-[11px] leading-tight">
+                      {item.title}
+                    </p>
                   </div>
                 ))}
               </div>
@@ -279,38 +355,41 @@ export default function SocialCalendarPage() {
 
       {/* Quick Schedule Modal */}
       {showScheduleModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 animate-scaleIn border border-slate-200">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-              <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
-                <CalendarIcon className="w-5 h-5 text-pink-600" />
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-[#0b101d] rounded-3xl shadow-2xl max-w-lg w-full p-6 border border-white/10">
+            <div className="flex items-center justify-between border-b border-white/[0.08] pb-4">
+              <h3 className="font-bold text-base text-white flex items-center gap-2">
+                <CalendarIcon className="w-4 h-4 text-pink-400" />
                 زمان‌بندی انتشار محتوا
               </h3>
-              <button onClick={() => setShowScheduleModal(false)} className="text-slate-400 hover:text-slate-600 p-1">
+              <button
+                onClick={() => setShowScheduleModal(false)}
+                className="text-slate-400 hover:text-white p-1 cursor-pointer"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <form onSubmit={handleCreateContent} className="mt-5 space-y-4 text-xs">
               <div>
-                <label className="block font-bold text-slate-700 mb-1">موضوع یا عنوان محتوا *</label>
+                <label className="block font-bold text-slate-300 mb-1.5">موضوع یا عنوان محتوا *</label>
                 <input
                   type="text"
                   required
                   placeholder="مثلاً: ریلز معرفی مانتو کتی ژاکارد..."
                   value={formTitle}
                   onChange={(e) => setFormTitle(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-pink-500"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-white/[0.1] bg-white/[0.04] text-xs text-white placeholder-slate-500 focus:outline-none focus:border-pink-500/60"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">اکانت انتشار</label>
+                  <label className="block font-bold text-slate-300 mb-1.5">اکانت انتشار</label>
                   <select
                     value={formAccount}
                     onChange={(e) => setFormAccount(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white focus:outline-none"
+                    className="w-full px-3 py-2.5 rounded-xl border border-white/[0.1] bg-[#0e1628] text-white focus:outline-none cursor-pointer"
                   >
                     {accounts.map((a) => (
                       <option key={a.id} value={a.id}>
@@ -321,11 +400,11 @@ export default function SocialCalendarPage() {
                 </div>
 
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">قالب محتوا</label>
+                  <label className="block font-bold text-slate-300 mb-1.5">قالب محتوا</label>
                   <select
                     value={formContentType}
                     onChange={(e) => setFormContentType(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white focus:outline-none"
+                    className="w-full px-3 py-2.5 rounded-xl border border-white/[0.1] bg-[#0e1628] text-white focus:outline-none cursor-pointer"
                   >
                     <option value="REEL">ریلز (Reels)</option>
                     <option value="POST">پست تک‌اسلایدی</option>
@@ -337,51 +416,51 @@ export default function SocialCalendarPage() {
               </div>
 
               <div>
-                <label className="block font-bold text-slate-700 mb-1">متن کپشن یا پیام</label>
+                <label className="block font-bold text-slate-300 mb-1.5">متن کپشن یا پیام</label>
                 <textarea
                   rows={3}
                   placeholder="کپشن جذاب، هشتگ‌ها و کال‌تواکشن دایرکت..."
                   value={formCaption}
                   onChange={(e) => setFormCaption(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-pink-500"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-white/[0.1] bg-white/[0.04] text-xs text-white placeholder-slate-500 focus:outline-none focus:border-pink-500/60"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">تاریخ انتشار</label>
+                  <label className="block font-bold text-slate-300 mb-1.5">تاریخ انتشار</label>
                   <input
                     type="date"
                     value={modalDate}
                     onChange={(e) => setModalDate(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white focus:outline-none"
+                    className="w-full px-3 py-2.5 rounded-xl border border-white/[0.1] bg-[#0e1628] text-white focus:outline-none cursor-pointer"
                   />
                 </div>
 
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">آدرس کاور / پیش‌نمایش</label>
+                  <label className="block font-bold text-slate-300 mb-1.5">آدرس کاور / پیش‌نمایش</label>
                   <input
                     type="url"
                     placeholder="https://..."
                     value={formThumbnail}
                     onChange={(e) => setFormThumbnail(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 focus:outline-none"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-white/[0.1] bg-white/[0.04] text-xs text-white placeholder-slate-500 focus:outline-none focus:border-pink-500/60"
                   />
                 </div>
               </div>
 
-              <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
+              <div className="flex justify-end gap-3 pt-4 border-t border-white/[0.08]">
                 <button
                   type="button"
                   onClick={() => setShowScheduleModal(false)}
-                  className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 font-medium"
+                  className="px-4 py-2 rounded-xl text-slate-400 hover:text-white cursor-pointer"
                 >
                   انصراف
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="px-5 py-2 rounded-xl font-bold bg-pink-600 hover:bg-pink-700 text-white shadow-sm"
+                  className="px-5 py-2.5 rounded-xl font-bold bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white shadow-[0_0_15px_rgba(236,72,153,0.4)] cursor-pointer"
                 >
                   {isSubmitting ? 'در حال ثبت...' : 'ثبت در تقویم'}
                 </button>

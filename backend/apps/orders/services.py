@@ -101,8 +101,15 @@ def create_order(store, customer_data, items_data, warehouse, channel=OrderChann
 
 @transaction.atomic
 def cancel_order(order, reason='', user=None):
-    """Cancels order and releases reserved inventory"""
-    if order.order_status in [OrderStatus.CANCELLED, OrderStatus.COMPLETED]:
+    """Cancels order and releases reserved inventory. Rejects cancellation of fulfilled orders."""
+    if order.order_status in [OrderStatus.CANCELLED, OrderStatus.COMPLETED, OrderStatus.FULFILLED] or order.fulfillment_status == FulfillmentStatus.FULFILLED:
+        raise ValueError(
+            f"سفارش با وضعیت {order.get_order_status_display()} قابل لغو مستقیم نیست. "
+            "برای سفارش‌های ارسال‌شده، از فرآیند ثبت مرجوعی (RMA) استفاده نمایید."
+        )
+
+    order = Order.objects.select_for_update().get(id=order.id)
+    if order.order_status in [OrderStatus.CANCELLED, OrderStatus.COMPLETED, OrderStatus.FULFILLED] or order.fulfillment_status == FulfillmentStatus.FULFILLED:
         raise ValueError(f"سفارش با وضعیت {order.get_order_status_display()} قابل لغو نیست.")
 
     # Release reservations for each item
@@ -132,9 +139,21 @@ def cancel_order(order, reason='', user=None):
 
 @transaction.atomic
 def fulfill_order(order, tracking_number='', shipping_cost=None, user=None):
-    """Commits reserved stock to permanent sale and marks order fulfilled"""
+    """Commits reserved stock to permanent sale and marks order fulfilled. Idempotent against duplicate requests."""
     if order.order_status == OrderStatus.CANCELLED:
         raise ValueError("سفارش لغو شده قابل ارسال نیست.")
+
+    # Idempotent return if already fulfilled
+    if order.order_status in [OrderStatus.FULFILLED, OrderStatus.COMPLETED] or order.fulfillment_status == FulfillmentStatus.FULFILLED:
+        from apps.fulfillment.models import Shipment
+        existing_shipment = Shipment.objects.filter(order=order).first()
+        return order, existing_shipment
+
+    order = Order.objects.select_for_update().get(id=order.id)
+    if order.order_status in [OrderStatus.FULFILLED, OrderStatus.COMPLETED] or order.fulfillment_status == FulfillmentStatus.FULFILLED:
+        from apps.fulfillment.models import Shipment
+        existing_shipment = Shipment.objects.filter(order=order).first()
+        return order, existing_shipment
 
     for item in order.items.all():
         commit_stock_sale(
@@ -150,14 +169,16 @@ def fulfill_order(order, tracking_number='', shipping_cost=None, user=None):
     order.fulfillment_status = FulfillmentStatus.FULFILLED
     order.save()
 
-    # Record shipment
-    from apps.fulfillment.models import Shipment, ShipmentStatus
-    shipment = Shipment.objects.create(
+    # Record shipment using fulfillment service with idempotency key
+    from apps.fulfillment.services import create_shipment
+    from apps.fulfillment.models import Carrier
+    shipment = create_shipment(
         store=order.store,
         order=order,
         tracking_number=tracking_number or f"TRK-{str(order.id)[:8].upper()}",
-        status=ShipmentStatus.SHIPPED,
+        carrier=Carrier.IRPOST,
         shipping_cost=shipping_cost if shipping_cost is not None else order.shipping_cost,
+        idempotency_key=f"ship_{order.id}"
     )
 
     record_audit_event(

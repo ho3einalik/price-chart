@@ -20,18 +20,84 @@ class ApiClient {
     return headers;
   }
 
+  private isRefreshing = false;
+  private refreshSubscribers: ((token: string) => void)[] = [];
+
+  private onTokenRefreshed(token: string) {
+    this.refreshSubscribers.forEach((cb) => cb(token));
+    this.refreshSubscribers = [];
+  }
+
+  private addRefreshSubscriber(cb: (token: string) => void) {
+    this.refreshSubscribers.push(cb);
+  }
+
   async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const url = `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
     const headers = this.getHeaders(options.headers as Record<string, string>);
 
-    const response = await fetch(url, {
+    let response = await fetch(url, {
       ...options,
       headers,
     });
 
-    if (response.status === 401 && typeof window !== 'undefined') {
-      // Token expired or invalid
-      // localStorage.removeItem('shoppilot_access_token');
+    if (
+      response.status === 401 &&
+      typeof window !== 'undefined' &&
+      !endpoint.includes('/auth/login/') &&
+      !endpoint.includes('/auth/token/refresh/')
+    ) {
+      const refreshToken = localStorage.getItem('shoppilot_refresh_token');
+      if (refreshToken) {
+        if (!this.isRefreshing) {
+          this.isRefreshing = true;
+          try {
+            const refreshRes = await fetch(`${API_BASE_URL}/auth/token/refresh/`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ refresh: refreshToken }),
+            });
+
+            if (refreshRes.ok) {
+              const refreshData = await refreshRes.json();
+              const newAccess = refreshData.access;
+              localStorage.setItem('shoppilot_access_token', newAccess);
+              this.isRefreshing = false;
+              this.onTokenRefreshed(newAccess);
+
+              // Retry original request with new access token
+              const newHeaders = this.getHeaders(options.headers as Record<string, string>);
+              response = await fetch(url, {
+                ...options,
+                headers: newHeaders,
+              });
+            } else {
+              this.isRefreshing = false;
+              localStorage.removeItem('shoppilot_access_token');
+              localStorage.removeItem('shoppilot_refresh_token');
+            }
+          } catch {
+            this.isRefreshing = false;
+          }
+        } else {
+          return new Promise<T>((resolve, reject) => {
+            this.addRefreshSubscriber(async () => {
+              try {
+                const newHeaders = this.getHeaders(options.headers as Record<string, string>);
+                const retryRes = await fetch(url, { ...options, headers: newHeaders });
+                if (!retryRes.ok) {
+                  const errorData = await retryRes.json().catch(() => ({}));
+                  reject(new Error(errorData.error || errorData.detail || `Error ${retryRes.status}`));
+                } else {
+                  resolve(await retryRes.json());
+                }
+              } catch (e) {
+                reject(e);
+              }
+            });
+          });
+        }
+      }
     }
 
     if (!response.ok) {
@@ -44,6 +110,24 @@ class ApiClient {
     }
 
     return response.json();
+  }
+
+  async downloadFile(endpoint: string, filename: string): Promise<void> {
+    const url = `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+    const headers = this.getHeaders();
+    const res = await fetch(url, { headers });
+    if (!res.ok) {
+      throw new Error(`Failed to download file: ${res.statusText}`);
+    }
+    const blob = await res.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(downloadUrl);
   }
 
   // Auth
@@ -508,6 +592,469 @@ class ApiClient {
       body: JSON.stringify({ name, state, credentials: credentials || {} }),
     });
   }
+
+  // Suppliers & Purchase Orders
+  async getSuppliers(search?: string) {
+    const q = search ? `?search=${encodeURIComponent(search)}` : '';
+    return this.request<{ results: any[] } | any[]>(`/suppliers/suppliers/${q}`);
+  }
+
+  async createSupplier(data: any) {
+    return this.request<any>('/suppliers/suppliers/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getPurchaseOrders(status?: string) {
+    const q = status ? `?status=${status}` : '';
+    return this.request<{ results: any[] } | any[]>(`/suppliers/purchase-orders/${q}`);
+  }
+
+  async createPurchaseOrder(data: any) {
+    return this.request<any>('/suppliers/purchase-orders/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async approvePurchaseOrder(id: string) {
+    return this.request<any>(`/suppliers/purchase-orders/${id}/approve/`, {
+      method: 'POST',
+    });
+  }
+
+  async receivePOGoods(id: string, receipts: Array<{ item_id: string; quantity_received: number }>) {
+    return this.request<any>(`/suppliers/purchase-orders/${id}/receive-goods/`, {
+      method: 'POST',
+      body: JSON.stringify({ receipts }),
+    });
+  }
+
+  // Customer Returns & RMAs
+  async getReturnRequests(status?: string) {
+    const q = status ? `?status=${status}` : '';
+    return this.request<{ results: any[] } | any[]>(`/returns/requests/${q}`);
+  }
+
+  async createReturnRequest(data: any) {
+    return this.request<any>('/returns/requests/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async approveReturnRequest(id: string, staff_notes?: string) {
+    return this.request<any>(`/returns/requests/${id}/approve/`, {
+      method: 'POST',
+      body: JSON.stringify({ staff_notes: staff_notes || '' }),
+    });
+  }
+
+  async inspectAndProcessReturn(id: string, data: any) {
+    return this.request<any>(`/returns/requests/${id}/inspect-and-process/`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // Finance & Operating Expenses
+  async getExpenses(category?: string) {
+    const q = category ? `?category=${category}` : '';
+    return this.request<{ results: any[] } | any[]>(`/finance/expenses/${q}`);
+  }
+
+  async createExpense(data: any) {
+    return this.request<any>('/finance/expenses/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getFinancialStatement(days: number = 30) {
+    return this.request<any>(`/finance/statement/?days=${days}`);
+  }
+
+  // CRM & Customer Profiles
+  async getCRMProfiles(params?: { segment?: string; search?: string }) {
+    const q = new URLSearchParams();
+    if (params?.segment) q.append('segment', params.segment);
+    if (params?.search) q.append('search', params.search);
+    return this.request<{ results: any[] } | any[]>(`/crm/profiles/?${q.toString()}`);
+  }
+
+  async recalculateCRM() {
+    return this.request<any>('/crm/profiles/recalculate-all/', {
+      method: 'POST',
+    });
+  }
+
+  async getCRMSegmentsSummary() {
+    return this.request<any[]>('/crm/profiles/segments-summary/');
+  }
+
+  async addCRMInteraction(profileId: string, data: any) {
+    return this.request<any>(`/crm/profiles/${profileId}/add-interaction/`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // Unified Social Inbox
+  async getInboxThreads(params?: { channel?: string; status?: string }) {
+    const q = new URLSearchParams();
+    if (params?.channel) q.append('channel', params.channel);
+    if (params?.status) q.append('status', params.status);
+    return this.request<{ results: any[] } | any[]>(`/social-inbox/threads/?${q.toString()}`);
+  }
+
+  async sendInboxMessage(threadId: string, text: string, isAi?: boolean, wasEdited?: boolean) {
+    return this.request<any>(`/social-inbox/threads/${threadId}/send-message/`, {
+      method: 'POST',
+      body: JSON.stringify({ text, is_ai_generated: isAi || false, was_edited_by_human: wasEdited || false }),
+    });
+  }
+
+  async suggestAIReply(threadId: string) {
+    return this.request<{ suggested_text: string; source: string }>(`/social-inbox/threads/${threadId}/suggest-ai-reply/`, {
+      method: 'POST',
+    });
+  }
+
+  async resolveInboxThread(threadId: string) {
+    return this.request<any>(`/social-inbox/threads/${threadId}/resolve/`, {
+      method: 'POST',
+    });
+  }
+
+  // Marketing & Coupons
+  async getCoupons() {
+    return this.request<{ results: any[] } | any[]>('/marketing/coupons/');
+  }
+
+  async createCoupon(data: any) {
+    return this.request<any>('/marketing/coupons/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async validateCoupon(code: string, orderAmount: number) {
+    return this.request<any>('/marketing/coupons/validate/', {
+      method: 'POST',
+      body: JSON.stringify({ code, order_amount: orderAmount }),
+    });
+  }
+
+  async getLoyaltyAccounts() {
+    return this.request<{ results: any[] } | any[]>('/marketing/loyalty/');
+  }
+
+  // Automation
+  async getAutomationRules() {
+    return this.request<{ results: any[] } | any[]>('/automation/rules/');
+  }
+
+  async createAutomationRule(data: any) {
+    return this.request<any>('/automation/rules/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async testRunAutomationRule(id: string, payload: any) {
+    return this.request<any>(`/automation/rules/${id}/test-run/`, {
+      method: 'POST',
+      body: JSON.stringify({ payload }),
+    });
+  }
+
+  // Intelligence
+  async getDemandForecasts(days: number = 30) {
+    return this.request<any[]>(`/intelligence/forecasts/?days=${days}`);
+  }
+
+  async getOrderRisk(orderId: string) {
+    return this.request<any>(`/intelligence/order-risk/${orderId}/`);
+  }
+
+  async askAICopilot(question: string) {
+    return this.request<{ question: string; answer: string; source: string }>('/intelligence/copilot/', {
+      method: 'POST',
+      body: JSON.stringify({ question }),
+    });
+  }
+
+  // Fulfillment & Shipping
+  async getFulfillmentPackingSlip(shipmentId: string) {
+    return this.request<any>(`/fulfillment/shipments/${shipmentId}/packing-slip/`);
+  }
+
+  async estimateShippingQuote(params: { weight_grams: number; origin_city: string; dest_city: string; carrier?: string }) {
+    const query = new URLSearchParams({
+      weight_grams: String(params.weight_grams),
+      origin_city: params.origin_city,
+      dest_city: params.dest_city,
+      carrier: params.carrier || 'IRPOST',
+    }).toString();
+    return this.request<any>(`/fulfillment/shipments/estimate-quote/?${query}`);
+  }
+
+  async updateShipmentStatus(shipmentId: string, data: { status: string; location?: string; description?: string; failed_reason?: string }) {
+    return this.request<any>(`/fulfillment/shipments/${shipmentId}/update-status/`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // Social & Team Proof
+  async submitContentProof(contentId: string, data: { proof_url?: string; proof_image_url?: string }) {
+    return this.request<any>(`/social/content/${contentId}/submit-proof/`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async verifyContentProof(contentId: string) {
+    return this.request<any>(`/social/content/${contentId}/verify-proof/`, {
+      method: 'POST',
+    });
+  }
+
+  async getTeamSocialPerformance(days: number = 30) {
+    return this.request<any>(`/social/team-performance/?days=${days}`);
+  }
+
+  async linkThreadOrder(threadId: string, orderId: string) {
+    return this.request<any>(`/social-inbox/threads/${threadId}/link-order/`, {
+      method: 'POST',
+      body: JSON.stringify({ order_id: orderId }),
+    });
+  }
+
+  async updateThreadNotes(threadId: string, notes: string) {
+    return this.request<any>(`/social-inbox/threads/${threadId}/update-notes/`, {
+      method: 'POST',
+      body: JSON.stringify({ notes }),
+    });
+  }
+
+  // Marketing & Retention
+  async getAbandonedCarts(status?: string) {
+    const query = status ? `?status=${status}` : '';
+    return this.request<any[]>(`/marketing/abandoned-carts/${query}`);
+  }
+
+  async recoverAbandonedCart(cartId: string, couponCode?: string) {
+    return this.request<any>(`/marketing/abandoned-carts/${cartId}/trigger-recovery/`, {
+      method: 'POST',
+      body: JSON.stringify({ coupon_code: couponCode }),
+    });
+  }
+
+  async getReferrals() {
+    return this.request<any[]>('/marketing/referrals/');
+  }
+
+  async convertReferral(referralId: string) {
+    return this.request<any>(`/marketing/referrals/${referralId}/convert/`, {
+      method: 'POST',
+    });
+  }
+
+  async getProductRecommendations(sourceVariantId?: string) {
+    const query = sourceVariantId ? `?source_variant_id=${sourceVariantId}` : '';
+    return this.request<any[]>(`/marketing/recommendations/${query}`);
+  }
+
+  // Finance & Settlements
+  async getGatewaySettlements() {
+    return this.request<any[]>('/finance/settlements/');
+  }
+
+  async createGatewaySettlement(data: any) {
+    return this.request<any>('/finance/settlements/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getAccountsPayableReceivable(entityType?: string, status?: string) {
+    const params = new URLSearchParams();
+    if (entityType) params.append('entity_type', entityType);
+    if (status) params.append('status', status);
+    const query = params.toString() ? `?${params.toString()}` : '';
+    return this.request<any[]>(`/finance/debts-credits/${query}`);
+  }
+
+  async getRefundRecords() {
+    return this.request<any[]>('/finance/refunds/');
+  }
+
+  async createRefundRecord(data: any) {
+    return this.request<any>('/finance/refunds/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  getFinanceExportCSVUrl() {
+    return `${API_BASE_URL}/finance/export-csv/`;
+  }
+
+  // Business Intelligence
+  async getSlowMovers(days: number = 60) {
+    return this.request<any>(`/intelligence/slow-movers/?days=${days}`);
+  }
+
+  async getCustomerFeedback(params?: { category?: string; sentiment?: string; is_resolved?: boolean }) {
+    const searchParams = new URLSearchParams();
+    if (params?.category) searchParams.append('category', params.category);
+    if (params?.sentiment) searchParams.append('sentiment', params.sentiment);
+    if (params?.is_resolved !== undefined) searchParams.append('is_resolved', String(params.is_resolved));
+    const query = searchParams.toString() ? `?${searchParams.toString()}` : '';
+    return this.request<any[]>(`/intelligence/feedback/${query}`);
+  }
+
+  async createCustomerFeedback(data: any) {
+    return this.request<any>('/intelligence/feedback/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getCompetitorPrices() {
+    return this.request<any[]>('/intelligence/competitor-prices/');
+  }
+
+  async createCompetitorPrice(data: any) {
+    return this.request<any>('/intelligence/competitor-prices/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // Wholesale & POS
+  async getB2BClients() {
+    return this.request<any[]>('/wholesale-pos/clients/');
+  }
+
+  async createB2BClient(data: any) {
+    return this.request<any>('/wholesale-pos/clients/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getVolumeTiers(variantId?: string) {
+    const query = variantId ? `?variant_id=${variantId}` : '';
+    return this.request<any[]>(`/wholesale-pos/volume-tiers/${query}`);
+  }
+
+  async createVolumeTier(data: any) {
+    return this.request<any>('/wholesale-pos/volume-tiers/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getPOSTerminals() {
+    return this.request<any[]>('/wholesale-pos/terminals/');
+  }
+
+  async createPOSTerminal(data: any) {
+    return this.request<any>('/wholesale-pos/terminals/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getPOSSessions() {
+    return this.request<any[]>('/wholesale-pos/sessions/');
+  }
+
+  async createPOSSession(data: { terminal: string; opening_cash?: number }) {
+    return this.request<any>('/wholesale-pos/sessions/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async closePOSSession(sessionId: string, data: { closing_cash: number; notes?: string }) {
+    return this.request<any>(`/wholesale-pos/sessions/${sessionId}/close-session/`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async posQuickCheckout(data: {
+    session_id: string;
+    items: { variant_id: string; quantity: number; unit_price?: number }[];
+    customer_phone?: string;
+    customer_name?: string;
+    payment_method?: string;
+    notes?: string;
+  }) {
+    return this.request<any>('/wholesale-pos/pos/checkout/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getProformas() {
+    return this.request<any[]>('/wholesale-pos/proformas/');
+  }
+
+  async createProforma(data: any) {
+    return this.request<any>('/wholesale-pos/proformas/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async convertProformaToOrder(proformaId: string) {
+    return this.request<any>(`/wholesale-pos/proformas/${proformaId}/convert-to-order/`, {
+      method: 'POST',
+    });
+  }
+
+  // Audit, Notifications & Reports
+  async getNotifications(isRead?: boolean) {
+    const query = isRead !== undefined ? `?is_read=${isRead}` : '';
+    return this.request<any[]>(`/audit/notifications/${query}`);
+  }
+
+  async markNotificationRead(id: string) {
+    return this.request<any>(`/audit/notifications/${id}/read/`, {
+      method: 'POST',
+    });
+  }
+
+  async markAllNotificationsRead() {
+    return this.request<any>('/audit/notifications/read-all/', {
+      method: 'POST',
+    });
+  }
+
+  async getNotificationPreferences() {
+    return this.request<any>('/audit/preferences/');
+  }
+
+  async updateNotificationPreferences(data: any) {
+    return this.request<any>('/audit/preferences/', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getTeamActivitySummary(days: number = 30) {
+    return this.request<any>(`/audit/team-activity/?days=${days}`);
+  }
+
+  getAuditExportCSVUrl() {
+    return `${API_BASE_URL}/audit/export-csv/`;
+  }
 }
 
 export const api = new ApiClient();
+

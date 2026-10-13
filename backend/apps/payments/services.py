@@ -2,19 +2,23 @@ from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 from .models import PaymentTransaction, PaymentVerificationStatus
-from apps.orders.models import PaymentStatus
+from apps.orders.models import Order, PaymentStatus
 from apps.audit.services import record_audit_event
 
 @transaction.atomic
 def verify_payment_transaction(payment, user):
-    """Manually approves card-to-card or gateway transaction and syncs order payment status"""
+    """Manually approves card-to-card or gateway transaction and syncs order payment status idempotently"""
+    payment = PaymentTransaction.objects.select_for_update().get(id=payment.id)
+    if payment.status == PaymentVerificationStatus.VERIFIED:
+        return payment
+
     payment.status = PaymentVerificationStatus.VERIFIED
     payment.verified_by = user
     payment.verified_at = timezone.now()
     payment.save()
 
-    # Recalculate order total verified payments
-    order = payment.order
+    # Recalculate order total verified payments under row lock
+    order = Order.objects.select_for_update().get(id=payment.order_id)
     total_verified = sum(
         p.amount for p in order.payments.filter(status=PaymentVerificationStatus.VERIFIED)
     )
@@ -39,14 +43,18 @@ def verify_payment_transaction(payment, user):
 
 @transaction.atomic
 def reject_payment_transaction(payment, reason, user):
-    """Rejects card-to-card payment transaction with reason"""
+    """Rejects card-to-card payment transaction with reason idempotently"""
+    payment = PaymentTransaction.objects.select_for_update().get(id=payment.id)
+    if payment.status == PaymentVerificationStatus.REJECTED:
+        return payment
+
     payment.status = PaymentVerificationStatus.REJECTED
     payment.rejection_reason = reason
     payment.verified_by = user
     payment.verified_at = timezone.now()
     payment.save()
 
-    order = payment.order
+    order = Order.objects.select_for_update().get(id=payment.order_id)
     total_verified = sum(
         p.amount for p in order.payments.filter(status=PaymentVerificationStatus.VERIFIED)
     )

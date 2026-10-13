@@ -45,6 +45,9 @@ class FeatureToggleView(APIView):
         return Response(result, status=status.HTTP_200_OK)
 
 
+from django.conf import settings as django_settings
+from .models import SubscriptionTier
+
 class SubscriptionTierView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsStoreAdminOrOwnerPermission]
 
@@ -55,7 +58,23 @@ class SubscriptionTierView(APIView):
 
         settings = FeatureService.get_or_create_settings(store)
         old_tier = settings.tier
-        settings.tier = serializer.validated_data['tier']
+        new_tier = serializer.validated_data['tier']
+
+        tier_hierarchy = {
+            SubscriptionTier.FREE: 1,
+            SubscriptionTier.STARTER: 2,
+            SubscriptionTier.PRO: 3,
+            SubscriptionTier.ENTERPRISE: 4
+        }
+        current_rank = tier_hierarchy.get(old_tier, 1)
+        new_rank = tier_hierarchy.get(new_tier, 1)
+
+        # In production, upgrading to a higher tier requires superuser, platform staff, or payment confirmation
+        payment_reference = serializer.validated_data.get('payment_reference')
+        if new_rank > current_rank and not (request.user.is_superuser or request.user.is_staff or django_settings.DEBUG or payment_reference):
+            raise PermissionDenied("ارتقای پلن اشتراک مستلزم تسویه فاکتور اشتراک یا تأیید مدیر سامانه است.")
+
+        settings.tier = new_tier
         settings.save()
 
         return Response({

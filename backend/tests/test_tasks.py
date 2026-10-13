@@ -18,6 +18,9 @@ class TestTaskEngine:
         biz = Business.objects.create(name="Task Biz", owner=owner)
         store = Store.objects.create(business=biz, name="Task Store")
 
+        from apps.features.models import StoreFeatureSetting, SubscriptionTier
+        StoreFeatureSetting.objects.create(store=store, tier=SubscriptionTier.STARTER)
+
         StoreMembership.objects.create(store=store, user=owner, role=Role.OWNER, status=MembershipStatus.ACTIVE)
         StoreMembership.objects.create(store=store, user=employee, role=Role.CONTENT_CREATOR, status=MembershipStatus.ACTIVE)
         StoreMembership.objects.create(store=store, user=reviewer, role=Role.BUSINESS_MANAGER, status=MembershipStatus.ACTIVE)

@@ -84,8 +84,8 @@ export default function LoginPage() {
           </div>
         )}
 
-        {/* Demo Fast Login Pill */}
-        {!isRegister && (
+        {/* Demo Fast Login Pill (gated by development mode or explicit NEXT_PUBLIC_ENABLE_DEMO_LOGIN) */}
+        {!isRegister && (process.env.NEXT_PUBLIC_ENABLE_DEMO_LOGIN === 'true' || process.env.NODE_ENV !== 'production') && (
           <div className="bg-sky-50 border border-sky-100 p-3 rounded-xl flex items-center justify-between">
             <div className="text-xs text-sky-900 font-medium">حساب نمایشی (Demo Account) آماده است</div>
             <button
