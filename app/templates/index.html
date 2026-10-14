@@ -115,10 +115,16 @@
           </div>
         </div>
 
-        <!-- Live Status Pill (Mobile) -->
-        <div class="flex md:hidden items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[11px]">
-          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse-dot"></span>
-          <span class="font-mono font-semibold">FEED ACTIVE</span>
+        <!-- Live Status Pill & Real Date (Mobile) -->
+        <div class="flex md:hidden items-center gap-2">
+          <div class="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-[11px] font-mono" title="Real Calendar Date">
+            <span class="text-slate-400">Today:</span>
+            <span id="badge-real-today-mobile" class="text-cyan-400 font-semibold">{{ real_today if real_today else '--' }}</span>
+          </div>
+          <div class="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[11px]">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse-dot"></span>
+            <span class="font-mono font-semibold">FEED ACTIVE</span>
+          </div>
         </div>
       </div>
 
@@ -127,8 +133,17 @@
         
         <!-- Live Status Badges (Desktop) -->
         <div class="hidden sm:flex items-center gap-2 text-xs">
+          <!-- Real Calendar Today Badge -->
+          <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300" title="Real Calendar Date (Not Bank of Russia fixing date)">
+            <svg class="w-3.5 h-3.5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+            </svg>
+            <span class="text-slate-400 font-medium">Today:</span>
+            <span id="badge-real-today" class="font-mono font-semibold text-cyan-300">{{ real_today if real_today else '--' }}</span>
+          </div>
+
           <!-- Moscow 18:15 Auto-Sync Badge -->
-          <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300" title="Scheduled to automatically update every day at 18:15 (6:15 PM) Moscow Time (MSK / UTC+3)">
+          <div class="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300" title="Scheduled to automatically update every day at 18:15 (6:15 PM) Moscow Time (MSK / UTC+3)">
             <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse-dot"></span>
             <span class="text-slate-400">Auto-Sync:</span>
             <span class="font-mono font-medium text-slate-200">Daily @ 18:15 MSK</span>
@@ -804,7 +819,10 @@
           updateFocusedChart();
         }
 
-        // Header Last Synced
+        // Header Last Synced & Real Today Date
+        if (dashboardPayload.real_today) {
+          updateRealTodayBadge(dashboardPayload.real_today);
+        }
         if (dashboardPayload.last_synced) {
           const syncDate = new Date(dashboardPayload.last_synced);
           document.getElementById('badge-last-synced').textContent = syncDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -972,14 +990,42 @@
       showToast('CSV downloaded');
     }
 
+    // Update Real Calendar Today Badge
+    function updateRealTodayBadge(serverToday) {
+      let dateStr = serverToday;
+      let weekday = '';
+      if (dateStr) {
+        const parts = dateStr.split('-');
+        if (parts.length === 3) {
+          const d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+          weekday = d.toLocaleDateString('en-US', { weekday: 'short' });
+        }
+      } else {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        dateStr = `${year}-${month}-${day}`;
+        weekday = now.toLocaleDateString('en-US', { weekday: 'short' });
+      }
+
+      const el = document.getElementById('badge-real-today');
+      if (el) el.textContent = weekday ? `${dateStr} (${weekday})` : dateStr;
+
+      const elMobile = document.getElementById('badge-real-today-mobile');
+      if (elMobile) elMobile.textContent = dateStr;
+    }
+
     // On Document Ready
     document.addEventListener('DOMContentLoaded', () => {
+      updateRealTodayBadge();
       initCharts();
       selectCurrency('USD');
       loadDashboardData();
 
       // Background periodic check every 60 seconds
       setInterval(loadDashboardData, 60000);
+      setInterval(updateRealTodayBadge, 60000);
     });
   </script>
 

@@ -108,7 +108,12 @@ app.add_middleware(
 @app.get("/", response_class=HTMLResponse)
 async def serve_dashboard(request: Request):
     """Renders the main institutional dark mode dashboard."""
-    return templates.TemplateResponse(request=request, name="index.html")
+    real_today = date.today().strftime("%Y-%m-%d")
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={"real_today": real_today}
+    )
 
 
 @app.get("/api/dashboard-data")
@@ -130,6 +135,7 @@ async def get_dashboard_metrics(
 
     data = get_dashboard_data(parsed_days)
     data["backfill_status"] = backfill_state
+    data["real_today"] = date.today().strftime("%Y-%m-%d")
     return JSONResponse(content=data)
 
 
