@@ -158,7 +158,7 @@ async def trigger_fetch_now():
 
 
 @app.get("/api/history-table")
-async def get_history_table(limit: int = Query(default=30, ge=1, le=365)):
+async def get_history_table(limit: int = Query(default=100, ge=1, le=1000)):
     """
     Returns tabular historical rates (Date, USD, EUR, AED) suitable for data tables and exports.
     """

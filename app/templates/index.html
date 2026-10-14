@@ -848,7 +848,7 @@
     // Load data for historical table
     async function loadTableData() {
       try {
-        const response = await fetch('/api/history-table?limit=30');
+        const response = await fetch('/api/history-table?limit=100');
         if (!response.ok) return;
         const json = await response.json();
         cachedTableData = json.records || [];
