@@ -23,5 +23,6 @@ urlpatterns = [
     path('invoices/<uuid:pk>/manual-approve/', SubscriptionInvoiceManualApproveView.as_view(), name='feature-invoice-manual-approve'),
     path('integrations/', IntegrationListView.as_view(), name='feature-integrations'),
     path('integrations/configure/', IntegrationConfigView.as_view(), name='feature-integration-configure'),
+    path('integrations/config/', IntegrationConfigView.as_view(), name='feature-integration-config'),
 ]
 

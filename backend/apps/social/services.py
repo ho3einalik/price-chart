@@ -107,31 +107,87 @@ class SocialService:
         return content
 
     @staticmethod
-    def dispatch_direct_api_publish(content, user=None):
-        from .models import PublishingMode
-        import uuid
+    def dispatch_direct_api_publish(content, user=None, allow_mock_in_test=False):
+        from .models import PublishingMode, SocialPlatform
+        from django.conf import settings
+        import urllib.request
+        import urllib.parse
+        import json
+        import os
 
         if content.publishing_mode != PublishingMode.DIRECT_API:
             raise ValidationError("این محتوا برای انتشار مستقیم API تنظیم نشده است.")
 
         if not content.account or not content.account.is_connected:
-            raise ValidationError("اکانت شبکه اجتماعی مربوطه متصل نیست یا کلید دسترسی معتبر ندارد.")
+            raise ValidationError("اکانت شبکه اجتماعی مربوطه متصل نیست یا کلید دسترسی معتبر ندارد (NOT_CONFIGURED).")
 
         platform = content.account.platform
-        external_id = f"srv-{platform.lower()}-{uuid.uuid4().hex[:12]}"
-        pub_url = f"https://{platform.lower()}.com/p/{uuid.uuid4().hex[:10]}"
 
-        api_response = {
-            'status': 'SUCCESS',
-            'external_post_id': external_id,
-            'published_url': pub_url
-        }
+        if platform == SocialPlatform.TELEGRAM:
+            bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
+            channel = content.account.handle  # e.g. @channelname
+            if not bot_token:
+                if getattr(settings, 'SOCIAL_MOCK_DISPATCH', False) or allow_mock_in_test:
+                    api_response = {
+                        'status': 'MOCKED',
+                        'external_post_id': f"mock-tg-{content.id}",
+                        'published_url': f"https://t.me/{channel.lstrip('@')}/999"
+                    }
+                    return SocialService.publish_content(content=content, user=user, direct_api_response=api_response)
+                raise ValidationError({
+                    "account": "توکن ربات تلگرام (TELEGRAM_BOT_TOKEN) برای انتشار مستقیم در کانال تنظیم نشده است (NOT_CONFIGURED)."
+                })
 
-        return SocialService.publish_content(
-            content=content,
-            user=user,
-            direct_api_response=api_response
-        )
+            # Real API call to Telegram
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+            payload = {
+                'chat_id': channel,
+                'text': f"{content.title}\n\n{content.caption}"
+            }
+            try:
+                req = urllib.request.Request(
+                    url,
+                    data=json.dumps(payload).encode('utf-8'),
+                    headers={'Content-Type': 'application/json'},
+                    method='POST'
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read().decode('utf-8'))
+                    if data.get('ok'):
+                        msg_id = data.get('result', {}).get('message_id')
+                        channel_clean = channel.lstrip('@')
+                        pub_url = f"https://t.me/{channel_clean}/{msg_id}"
+                        return SocialService.publish_content(
+                            content=content,
+                            user=user,
+                            direct_api_response={
+                                'status': 'PUBLISHED',
+                                'external_post_id': str(msg_id),
+                                'published_url': pub_url
+                            }
+                        )
+                    else:
+                        raise ValidationError(f"خطای انتشار تلگرام: {data.get('description', 'خطای سرویس تلگرام')}")
+            except Exception as e:
+                raise ValidationError(f"ارسال پیام به تلگرام شکست خورد: {str(e)}")
+
+        elif platform == SocialPlatform.INSTAGRAM:
+            meta_token = os.environ.get('INSTAGRAM_GRAPH_TOKEN') or os.environ.get('META_ACCESS_TOKEN')
+            if not meta_token:
+                if getattr(settings, 'SOCIAL_MOCK_DISPATCH', False) or allow_mock_in_test:
+                    api_response = {
+                        'status': 'MOCKED',
+                        'external_post_id': f"mock-ig-{content.id}",
+                        'published_url': f"https://instagram.com/p/mock_{content.id}"
+                    }
+                    return SocialService.publish_content(content=content, user=user, direct_api_response=api_response)
+                raise ValidationError({
+                    "account": "توکن دسترسی Meta Graph API برای انتشار مستقیم اینستاگرام تنظیم نشده است (NOT_CONFIGURED). لطفاً از شیوه یادآوری دستی (MANUAL_REMINDER) استفاده کنید."
+                })
+            raise ValidationError("انتشار مستقیم در اینستاگرام مستلزم حساب تجاری تأییدشده در Meta Graph API است. لطفاً از شیوه یادآوری دستی (MANUAL_REMINDER) استفاده فرمایید.")
+
+        else:
+            raise ValidationError(f"انتشار مستقیم API برای پلتفرم {platform} پشتیبانی نمی‌شود (UNSUPPORTED).")
 
     @staticmethod
     def submit_proof(content, proof_url='', proof_image_url='', user=None):

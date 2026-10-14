@@ -233,64 +233,60 @@ def inspect_and_process_return(rma, inspection_items_data, warehouse, user=None,
     rma.save(update_fields=['status', 'refund_status', 'staff_notes', 'updated_at'])
 
     # Synchronize financial refund & exchange settlement records in apps.finance
-    try:
-        from apps.finance.models import (
-            RefundRecord,
-            RefundStatus as FinRefundStatus,
-            AccountsPayableReceivable,
-            DebtEntityType,
-            DebtStatus
+    from apps.finance.models import (
+        RefundRecord,
+        RefundStatus as FinRefundStatus,
+        AccountsPayableReceivable,
+        DebtEntityType,
+        DebtStatus
+    )
+
+    # 1. Standard return refund
+    if rma.refund_amount > 0 and not rma.is_exchange:
+        fin_status = FinRefundStatus.COMPLETED if refund_status == RefundStatus.REFUNDED else FinRefundStatus.PENDING
+        RefundRecord.objects.get_or_create(
+            store=rma.store,
+            order=rma.order,
+            reason=f"استرداد وجه بابت مرجوعی {rma.rma_number}",
+            defaults={
+                'amount': rma.refund_amount,
+                'status': fin_status,
+                'destination_card_or_sheba': getattr(rma.order.customer, 'sheba_number', '') or '',
+                'processed_by': user if refund_status == RefundStatus.REFUNDED else None,
+                'processed_at': timezone.now() if refund_status == RefundStatus.REFUNDED else None,
+            }
         )
 
-        # 1. Standard return refund
-        if rma.refund_amount > 0 and not rma.is_exchange:
+    # 2. Exchange price difference tracking
+    if rma.is_exchange and rma.exchange_price_difference != Decimal('0'):
+        diff = rma.exchange_price_difference
+        if diff > 0:
+            # Customer owes difference -> Create receivable record
+            AccountsPayableReceivable.objects.create(
+                store=rma.store,
+                entity_type=DebtEntityType.CUSTOMER_CREDIT,
+                customer=rma.order.customer,
+                title=f"مابه‌التفاوت تعویض کالا در مرجوعی {rma.rma_number}",
+                total_amount=diff,
+                paid_amount=Decimal('0'),
+                due_date=timezone.now().date(),
+                status=DebtStatus.PENDING,
+                notes=f"مشتری برای دریافت کالای تعویضی {rma.exchange_variant.sku if rma.exchange_variant else ''} بابت مرجوعی {rma.rma_number} باید مبلغ {diff:,} تومان مابه‌التفاوت را پرداخت نماید."
+            )
+        elif diff < 0:
+            # Store owes customer refund for cheaper replacement item
+            refund_diff = abs(diff)
             fin_status = FinRefundStatus.COMPLETED if refund_status == RefundStatus.REFUNDED else FinRefundStatus.PENDING
-            RefundRecord.objects.get_or_create(
+            RefundRecord.objects.create(
                 store=rma.store,
                 order=rma.order,
-                reason=f"استرداد وجه بابت مرجوعی {rma.rma_number}",
-                defaults={
-                    'amount': rma.refund_amount,
-                    'status': fin_status,
-                    'destination_card_or_sheba': getattr(rma.order.customer, 'sheba_number', '') or '',
-                    'processed_by': user if refund_status == RefundStatus.REFUNDED else None,
-                    'processed_at': timezone.now() if refund_status == RefundStatus.REFUNDED else None,
-                }
+                amount=refund_diff,
+                status=fin_status,
+                destination_card_or_sheba=getattr(rma.order.customer, 'sheba_number', '') or '',
+                reason=f"استرداد مابه‌التفاوت تعویض کالا به نفع مشتری در مرجوعی {rma.rma_number}",
+                processed_by=user if refund_status == RefundStatus.REFUNDED else None,
+                processed_at=timezone.now() if refund_status == RefundStatus.REFUNDED else None
             )
-
-        # 2. Exchange price difference tracking
-        if rma.is_exchange and rma.exchange_price_difference != Decimal('0'):
-            diff = rma.exchange_price_difference
-            if diff > 0:
-                # Customer owes difference -> Create receivable record
-                AccountsPayableReceivable.objects.create(
-                    store=rma.store,
-                    entity_type=DebtEntityType.CUSTOMER_CREDIT,
-                    customer=rma.order.customer,
-                    title=f"مابه‌التفاوت تعویض کالا در مرجوعی {rma.rma_number}",
-                    total_amount=diff,
-                    paid_amount=Decimal('0'),
-                    due_date=timezone.now().date(),
-                    status=DebtStatus.PENDING,
-                    notes=f"مشتری برای دریافت کالای تعویضی {rma.exchange_variant.sku if rma.exchange_variant else ''} بابت مرجوعی {rma.rma_number} باید مبلغ {diff:,} تومان مابه‌التفاوت را پرداخت نماید."
-                )
-            elif diff < 0:
-                # Store owes customer refund for cheaper replacement item
-                refund_diff = abs(diff)
-                fin_status = FinRefundStatus.COMPLETED if refund_status == RefundStatus.REFUNDED else FinRefundStatus.PENDING
-                RefundRecord.objects.create(
-                    store=rma.store,
-                    order=rma.order,
-                    amount=refund_diff,
-                    status=fin_status,
-                    destination_card_or_sheba=getattr(rma.order.customer, 'sheba_number', '') or '',
-                    reason=f"استرداد مابه‌التفاوت تعویض کالا به نفع مشتری در مرجوعی {rma.rma_number}",
-                    processed_by=user if refund_status == RefundStatus.REFUNDED else None,
-                    processed_at=timezone.now() if refund_status == RefundStatus.REFUNDED else None
-                )
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).error(f"Failed to synchronize finance records for return {rma.rma_number}: {e}")
 
     record_audit_event(
         store=rma.store,

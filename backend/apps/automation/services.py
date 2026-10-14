@@ -64,9 +64,16 @@ def execute_actions(rule, actions, payload, dry_run=False):
             elif phone:
                 sms_adapter = get_integration_adapter('sms_gateway')
                 sms_res = sms_adapter.send_sms(to=phone, message=template, store=store)
-                results.append(f"پیامک به شماره {phone} ارسال شد (وضعیت: {sms_res.get('status')}).")
+                status = sms_res.get('status')
+                if status == 'ACCEPTED':
+                    results.append(f"پیامک به شماره {sms_res.get('recipient', phone)} ارسال شد (وضعیت: {status}).")
+                else:
+                    err = sms_res.get('error') or sms_res.get('message') or 'ارسال ناموفق'
+                    results.append(f"ارسال پیامک به شماره {sms_res.get('recipient', phone)} شکست خورد (وضعیت: {status}, خطا: {err}).")
+                    raise RuntimeError(f"اقدام پیامکی شکست خورد: وضعیت {status} - {err}")
             else:
                 results.append("شماره تلفنی در داده‌های رویداد برای ارسال پیامک یافت نشد.")
+                raise ValueError("شماره تلفنی در داده‌های رویداد برای ارسال پیامک یافت نشد.")
 
         elif act_type == 'NOTIFY_TEAM':
             if dry_run:

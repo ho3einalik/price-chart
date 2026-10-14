@@ -57,12 +57,24 @@ def pos_quick_checkout(store, session_id, items_data, customer_phone="0900000000
         if not warehouse:
             raise ValidationError("هیچ انباری برای کسر موجودی فروشگاه تعریف نشده است.")
 
-    # Get or create customer
-    customer, _ = Customer.objects.get_or_create(
-        store=store,
-        phone_number=customer_phone,
-        defaults={'full_name': customer_name or 'خریدار حضوری'}
-    )
+    # Get or create customer without merging disparate walk-in guests
+    phone = str(customer_phone or '').strip()
+    is_placeholder_phone = (not phone) or phone in ('09000000000', '09999999999', '00000000000')
+
+    if is_placeholder_phone:
+        guest_phone = f"GUEST-{uuid.uuid4().hex[:10]}"
+        customer = Customer.objects.create(
+            store=store,
+            phone_number=guest_phone,
+            full_name=customer_name or 'خریدار حضوری',
+            marketing_opt_in=False
+        )
+    else:
+        customer, _ = Customer.objects.get_or_create(
+            store=store,
+            phone_number=phone,
+            defaults={'full_name': customer_name or 'خریدار حضوری'}
+        )
 
     order_number = f"POS-{timezone.now().strftime('%y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
 

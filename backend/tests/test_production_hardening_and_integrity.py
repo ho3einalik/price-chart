@@ -221,15 +221,21 @@ class TestProductionHardeningAndIntegrity:
 
     def test_production_settings_validation(self):
         """Verify production security rules: weak secret key, wildcard hosts, and SQLite are rejected."""
+        import os
         import subprocess
         import sys
+        from pathlib import Path
+
+        backend_dir = str(Path(__file__).resolve().parent.parent)
+        env = os.environ.copy()
+        env["PYTHONPATH"] = backend_dir
 
         # 1. Weak secret key with DEBUG=False must fail
         cmd_weak_key = [
             sys.executable, "-c",
             "import os; os.environ['DJANGO_DEBUG']='False'; os.environ['DJANGO_SECRET_KEY']='short'; import config.settings"
         ]
-        proc = subprocess.run(cmd_weak_key, capture_output=True, text=True, cwd=str(self.store.pk and "c:/Users/ASUS/OneDrive/Desktop/onlineshop/backend"))
+        proc = subprocess.run(cmd_weak_key, capture_output=True, text=True, cwd=backend_dir, env=env)
         assert proc.returncode != 0
         assert "ImproperlyConfigured" in proc.stderr
         assert "DJANGO_SECRET_KEY" in proc.stderr
@@ -239,7 +245,7 @@ class TestProductionHardeningAndIntegrity:
             sys.executable, "-c",
             "import os; os.environ['DJANGO_DEBUG']='False'; os.environ['DJANGO_SECRET_KEY']='strong-secret-key-32-chars-long-123456'; os.environ['DJANGO_ALLOWED_HOSTS']='*'; import config.settings"
         ]
-        proc2 = subprocess.run(cmd_wildcard, capture_output=True, text=True, cwd="c:/Users/ASUS/OneDrive/Desktop/onlineshop/backend")
+        proc2 = subprocess.run(cmd_wildcard, capture_output=True, text=True, cwd=backend_dir, env=env)
         assert proc2.returncode != 0
         assert "ImproperlyConfigured" in proc2.stderr
         assert "DJANGO_ALLOWED_HOSTS" in proc2.stderr
@@ -249,7 +255,7 @@ class TestProductionHardeningAndIntegrity:
             sys.executable, "-c",
             "import os; os.environ['DJANGO_DEBUG']='False'; os.environ['DJANGO_SECRET_KEY']='strong-secret-key-32-chars-long-123456'; os.environ['DJANGO_ALLOWED_HOSTS']='api.shoppilot.ir'; import config.settings"
         ]
-        proc3 = subprocess.run(cmd_sqlite, capture_output=True, text=True, cwd="c:/Users/ASUS/OneDrive/Desktop/onlineshop/backend")
+        proc3 = subprocess.run(cmd_sqlite, capture_output=True, text=True, cwd=backend_dir, env=env)
         assert proc3.returncode != 0
         assert "ImproperlyConfigured" in proc3.stderr
         assert "Production database must be configured with PostgreSQL" in proc3.stderr

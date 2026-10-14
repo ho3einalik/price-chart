@@ -48,6 +48,7 @@ yarn-error.log*
 .vscode/
 .idea/
 *.swp
+user_prompt.txt
 *.swo
 .DS_Store
 Thumbs.db

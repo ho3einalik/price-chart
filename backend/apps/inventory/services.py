@@ -184,6 +184,10 @@ def adjust_stock(store, warehouse, variant, new_on_hand, reason='', reference=''
         raise ValueError("موجودی فیزیکی جدید نمی‌تواند کمتر از صفر باشد.")
 
     balance = get_or_create_balance(store, warehouse, variant)
+    if new_on_hand < balance.reserved_quantity:
+        raise ValidationError(
+            f"موجودی فیزیکی جدید ({new_on_hand}) نمی‌تواند از موجودی رزروشده فعال ({balance.reserved_quantity}) برای تنوع {variant.sku} کمتر باشد. ابتدا باید سفارش‌های رزروشده ارسال یا لغو شوند."
+        )
     old_on_hand = balance.on_hand_quantity
     diff = new_on_hand - old_on_hand
 

@@ -246,8 +246,10 @@ class SMSGatewayIntegrationAdapter(BaseIntegrationAdapter):
     def send_notification(self, store, phone_number: str, text: str) -> bool:
         """Safe non-blocking execution: does not crash caller on failure"""
         try:
-            self.send_sms(to=phone_number, message=text, store=store)
-            return True
+            res = self.send_sms(to=phone_number, message=text, store=store)
+            if res.get('status') in ['ACCEPTED', 'NOT_CONFIGURED']:
+                return True
+            return False
         except Exception as e:
             logger.warning(f"SMS notification failed: {e}")
             return False
@@ -260,7 +262,7 @@ class SMSGatewayIntegrationAdapter(BaseIntegrationAdapter):
             return {
                 'status': 'NOT_CONFIGURED',
                 'message': 'کلید وب‌سرویس پیامک در سیستم تنظیم نشده است.',
-                'recipient': to
+                'recipient': masked_to
             }
 
         try:
@@ -268,26 +270,49 @@ class SMSGatewayIntegrationAdapter(BaseIntegrationAdapter):
             data = urllib.parse.urlencode({'receptor': to, 'message': message}).encode('utf-8')
             req = urllib.request.Request(url, data=data, method='POST')
             with urllib.request.urlopen(req, timeout=8) as response:
-                if response.status == 200:
-                    body = json.loads(response.read().decode('utf-8'))
+                body = json.loads(response.read().decode('utf-8'))
+                ret = body.get('return', {})
+                return_status = ret.get('status')
+                return_message = ret.get('message', '')
+
+                # Kavenegar API schema: return.status must be 200 for successful acceptance
+                if response.status == 200 and return_status == 200:
+                    entries = body.get('entries', [])
+                    entry = entries[0] if entries else {}
+                    message_id = str(entry.get('messageid', ''))
+                    # Kavenegar send.json queues the message; status is ACCEPTED, not fake DELIVERED
                     return {
                         'status': 'ACCEPTED',
-                        'recipient': to,
-                        'message_id': str(body.get('entries', [{}])[0].get('messageid', 'kavenegar_ack')),
-                        'note': 'پیامک توسط درگاه پیامکی پذیرفته شد.'
+                        'recipient': masked_to,
+                        'message_id': message_id or 'kavenegar_ack',
+                        'note': f'پیامک توسط درگاه پیامکی پذیرفته شد ({return_message}).'
                     }
                 else:
                     return {
                         'status': 'FAILED',
-                        'recipient': to,
-                        'error': f"Unexpected response status {response.status}"
+                        'recipient': masked_to,
+                        'error': f"خطای درگاه پیامک (کد {return_status}): {return_message}"
                     }
+        except urllib.error.HTTPError as e:
+            try:
+                err_body = json.loads(e.read().decode('utf-8'))
+                err_msg = err_body.get('return', {}).get('message', str(e))
+                err_code = err_body.get('return', {}).get('status', e.code)
+            except Exception:
+                err_msg = str(e)
+                err_code = e.code
+            logger.warning(f"Kavenegar HTTP error {err_code} for {masked_to}: {err_msg}")
+            return {
+                'status': 'FAILED',
+                'recipient': masked_to,
+                'error': f"HTTP {err_code}: {err_msg}"
+            }
         except Exception as e:
             logger.warning(f"Kavenegar API call failed for {masked_to}: {e}")
             return {
                 'status': 'FAILED',
-                'recipient': to,
-                'error': str(e)
+                'recipient': masked_to,
+                'error': f"خطای ارتباط با درگاه پیامک: {str(e)}"
             }
 
 

@@ -1,5 +1,6 @@
 import csv
 import io
+import uuid
 from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
@@ -22,6 +23,8 @@ def create_order(store, customer_data, items_data, warehouse, channel=OrderChann
     from apps.features.services import FeatureService
     FeatureService.enforce_plan_quota(store, 'monthly_orders')
 
+    if warehouse.store_id != store.id:
+        raise ValueError("انبار انتخابی متعلق به این فروشگاه نیست.")
     if not items_data:
         raise ValueError("سفارش باید حداقل دارای یک ردیف کالا باشد.")
     if shipping_cost < Decimal('0'):
@@ -29,26 +32,42 @@ def create_order(store, customer_data, items_data, warehouse, channel=OrderChann
     if discount_amount < Decimal('0'):
         raise ValueError("مبلغ تخفیف نمی‌تواند منفی باشد.")
 
-    phone = customer_data.get('phone_number') or customer_data.get('phone') or '09000000000'
-    name = customer_data.get('full_name') or customer_data.get('name') or 'مشتری بدون نام'
+    phone = str(customer_data.get('phone_number') or customer_data.get('phone') or '').strip()
+    name = str(customer_data.get('full_name') or customer_data.get('name') or '').strip()
     opt_in = customer_data.get('marketing_opt_in', True)
 
-    customer, created = Customer.objects.get_or_create(
-        store=store,
-        phone_number=phone,
-        defaults={
-            'full_name': name,
-            'city': customer_data.get('city', ''),
-            'province': customer_data.get('province', ''),
-            'address_line': customer_data.get('address_line', '') or customer_data.get('address', ''),
-            'postal_code': customer_data.get('postal_code', ''),
-            'email': customer_data.get('email', ''),
-            'marketing_opt_in': opt_in,
-        }
-    )
-    if not created and 'marketing_opt_in' in customer_data and customer.marketing_opt_in != opt_in:
-        customer.marketing_opt_in = opt_in
-        customer.save(update_fields=['marketing_opt_in', 'updated_at'])
+    is_placeholder_phone = (not phone) or phone in ('09000000000', '09999999999', '00000000000')
+
+    if is_placeholder_phone:
+        guest_phone = f"GUEST-{uuid.uuid4().hex[:10]}"
+        customer = Customer.objects.create(
+            store=store,
+            phone_number=guest_phone,
+            full_name=name or 'مشتری مهمان / حضوری',
+            city=customer_data.get('city', ''),
+            province=customer_data.get('province', ''),
+            address_line=customer_data.get('address_line', '') or customer_data.get('address', ''),
+            postal_code=customer_data.get('postal_code', ''),
+            email=customer_data.get('email', ''),
+            marketing_opt_in=False,
+        )
+    else:
+        customer, created = Customer.objects.get_or_create(
+            store=store,
+            phone_number=phone,
+            defaults={
+                'full_name': name or 'مشتری بدون نام',
+                'city': customer_data.get('city', ''),
+                'province': customer_data.get('province', ''),
+                'address_line': customer_data.get('address_line', '') or customer_data.get('address', ''),
+                'postal_code': customer_data.get('postal_code', ''),
+                'email': customer_data.get('email', ''),
+                'marketing_opt_in': opt_in,
+            }
+        )
+        if not created and 'marketing_opt_in' in customer_data and customer.marketing_opt_in != opt_in:
+            customer.marketing_opt_in = opt_in
+            customer.save(update_fields=['marketing_opt_in', 'updated_at'])
 
     order_number = generate_order_number(store)
     order = Order.objects.create(

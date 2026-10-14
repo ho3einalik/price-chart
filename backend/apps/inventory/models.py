@@ -48,6 +48,10 @@ class InventoryBalance(TenantScopedModel):
                 condition=models.Q(quarantined_quantity__gte=0),
                 name='inventory_quarantined_non_negative'
             ),
+            models.CheckConstraint(
+                condition=models.Q(on_hand_quantity__gte=models.F('reserved_quantity')),
+                name='inventory_on_hand_gte_reserved'
+            ),
         ]
 
 

@@ -77,6 +77,37 @@ class BasePaymentGateway(ABC):
         """Server-to-server payment verification"""
         pass
 
+    @abstractmethod
+    def refund_payment(self, reference_number: str, amount: Decimal, store=None, currency: str = 'IRT') -> Dict[str, Any]:
+        """Online refund via gateway if supported"""
+        pass
+
+
+class UnsupportedPaymentGateway(BasePaymentGateway):
+    def __init__(self, name: str):
+        self.gateway_name = name
+
+    def request_payment(self, amount: Decimal, callback_url: str, description: str, order_id: str, store=None, currency: str = 'IRT') -> Dict[str, Any]:
+        return {
+            'success': False,
+            'status': 'UNSUPPORTED',
+            'message': f"درگاه پرداخت '{self.gateway_name}' در این سامانه پشتیبانی نمی‌شود یا هنوز پیاده‌سازی نشده است."
+        }
+
+    def verify_payment(self, authority: str, amount: Decimal, store=None, currency: str = 'IRT') -> GatewayPaymentResult:
+        return GatewayPaymentResult(
+            success=False,
+            status='UNSUPPORTED',
+            message=f"درگاه پرداخت '{self.gateway_name}' پشتیبانی نمی‌شود."
+        )
+
+    def refund_payment(self, reference_number: str, amount: Decimal, store=None, currency: str = 'IRT') -> Dict[str, Any]:
+        return {
+            'success': False,
+            'status': 'UNSUPPORTED',
+            'message': f"استرداد وجه در درگاه '{self.gateway_name}' پشتیبانی نمی‌شود."
+        }
+
 
 class ZarinpalGatewayAdapter(BasePaymentGateway):
     gateway_name = "zarinpal"
@@ -215,6 +246,17 @@ class ZarinpalGatewayAdapter(BasePaymentGateway):
                 message=f"خطا در استعلام از درگاه پرداخت: {str(e)}"
             )
 
+    def refund_payment(self, reference_number: str, amount: Decimal, store=None, currency: str = 'IRT') -> Dict[str, Any]:
+        """
+        Zarinpal online refund requires dedicated Payout API credentials.
+        Returns explicit status that automated online refund is unconfigured.
+        """
+        return {
+            'success': False,
+            'status': 'UNSUPPORTED_BY_GATEWAY',
+            'message': 'استرداد آنلاین مستقیم در درگاه زرین‌پال نیازمند وب‌سرویس تسویه اختصاصی است. لطفاً استرداد را به صورت کارت‌به‌کارت انجام دهید.'
+        }
+
 
 GATEWAY_REGISTRY = {
     'zarinpal': ZarinpalGatewayAdapter(),
@@ -222,4 +264,7 @@ GATEWAY_REGISTRY = {
 
 
 def get_payment_gateway(name: str = 'zarinpal') -> Optional[BasePaymentGateway]:
-    return GATEWAY_REGISTRY.get(name)
+    clean_name = (name or 'zarinpal').lower().strip()
+    if clean_name in GATEWAY_REGISTRY:
+        return GATEWAY_REGISTRY[clean_name]
+    return UnsupportedPaymentGateway(clean_name)

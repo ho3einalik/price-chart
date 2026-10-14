@@ -12,6 +12,10 @@ def verify_payment_transaction(payment, user):
     if payment.status == PaymentVerificationStatus.VERIFIED:
         return payment
 
+    if payment.status == PaymentVerificationStatus.REFUNDED:
+        from rest_framework.exceptions import ValidationError
+        raise ValidationError("تراکنش مستردشده قابل تأیید مجدد نیست.")
+
     # Lock order and check total verified payments to prevent overpayment race conditions
     order = Order.objects.select_for_update().get(id=payment.order_id)
     total_verified = sum(
@@ -74,9 +78,19 @@ def verify_payment_transaction(payment, user):
 @transaction.atomic
 def reject_payment_transaction(payment, reason, user):
     """Rejects card-to-card payment transaction with reason idempotently"""
+    from rest_framework.exceptions import ValidationError
+
     payment = PaymentTransaction.objects.select_for_update().get(id=payment.id)
     if payment.status == PaymentVerificationStatus.REJECTED:
         return payment
+
+    if payment.status in [PaymentVerificationStatus.VERIFIED, PaymentVerificationStatus.REFUNDED]:
+        raise ValidationError(
+            "رد کردن تراکنش تأییدشده یا مستردشده امکان‌پذیر نیست. برای بازگرداندن وجه باید از فرآیند ریفاند (استرداد) استفاده شود."
+        )
+
+    if payment.status != PaymentVerificationStatus.PENDING_VERIFICATION:
+        raise ValidationError(f"امکان تغییر وضعیت تراکنش از '{payment.status}' به رد شده وجود ندارد.")
 
     payment.status = PaymentVerificationStatus.REJECTED
     payment.rejection_reason = reason

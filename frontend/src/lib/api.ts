@@ -1,7 +1,7 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
 class ApiClient {
-  private getHeaders(extraHeaders: Record<string, string> = {}): HeadersInit {
+  private getHeaders(extraHeaders: Record<string, string> = {}): Record<string, string> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...extraHeaders,
@@ -21,15 +21,26 @@ class ApiClient {
   }
 
   private isRefreshing = false;
-  private refreshSubscribers: ((token: string) => void)[] = [];
+  private refreshSubscribers: Array<{
+    resolve: (token: string) => void;
+    reject: (error: any) => void;
+  }> = [];
 
   private onTokenRefreshed(token: string) {
-    this.refreshSubscribers.forEach((cb) => cb(token));
+    this.refreshSubscribers.forEach((sub) => sub.resolve(token));
     this.refreshSubscribers = [];
   }
 
-  private addRefreshSubscriber(cb: (token: string) => void) {
-    this.refreshSubscribers.push(cb);
+  private onTokenRefreshFailed(error: any) {
+    this.refreshSubscribers.forEach((sub) => sub.reject(error));
+    this.refreshSubscribers = [];
+  }
+
+  private addRefreshSubscriber(
+    resolve: (token: string) => void,
+    reject: (error: any) => void
+  ) {
+    this.refreshSubscribers.push({ resolve, reject });
   }
 
   async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
@@ -45,6 +56,7 @@ class ApiClient {
       response.status === 401 &&
       typeof window !== 'undefined' &&
       !endpoint.includes('/auth/login/') &&
+      !endpoint.includes('/auth/register/') &&
       !endpoint.includes('/auth/token/refresh/')
     ) {
       const refreshToken = localStorage.getItem('shoppilot_refresh_token');
@@ -67,6 +79,7 @@ class ApiClient {
 
               // Retry original request with new access token
               const newHeaders = this.getHeaders(options.headers as Record<string, string>);
+              newHeaders['Authorization'] = `Bearer ${newAccess}`;
               response = await fetch(url, {
                 ...options,
                 headers: newHeaders,
@@ -75,26 +88,38 @@ class ApiClient {
               this.isRefreshing = false;
               localStorage.removeItem('shoppilot_access_token');
               localStorage.removeItem('shoppilot_refresh_token');
+              const sessionError = new Error('نشست کاربری منقضی شده است. لطفاً مجدداً وارد شوید.');
+              this.onTokenRefreshFailed(sessionError);
+              throw sessionError;
             }
-          } catch {
+          } catch (err) {
             this.isRefreshing = false;
+            const error = err instanceof Error ? err : new Error('خطای ارتباط در بروزرسانی توکن نشست.');
+            this.onTokenRefreshFailed(error);
+            throw error;
           }
         } else {
           return new Promise<T>((resolve, reject) => {
-            this.addRefreshSubscriber(async () => {
-              try {
-                const newHeaders = this.getHeaders(options.headers as Record<string, string>);
-                const retryRes = await fetch(url, { ...options, headers: newHeaders });
-                if (!retryRes.ok) {
-                  const errorData = await retryRes.json().catch(() => ({}));
-                  reject(new Error(errorData.error || errorData.detail || `Error ${retryRes.status}`));
-                } else {
-                  resolve(await retryRes.json());
+            this.addRefreshSubscriber(
+              async (newToken: string) => {
+                try {
+                  const newHeaders = this.getHeaders(options.headers as Record<string, string>);
+                  newHeaders['Authorization'] = `Bearer ${newToken}`;
+                  const retryRes = await fetch(url, { ...options, headers: newHeaders });
+                  if (!retryRes.ok) {
+                    const errorData = await retryRes.json().catch(() => ({}));
+                    reject(new Error(errorData.error || errorData.detail || `Error ${retryRes.status}`));
+                  } else {
+                    resolve(await retryRes.json());
+                  }
+                } catch (e) {
+                  reject(e);
                 }
-              } catch (e) {
-                reject(e);
+              },
+              (err: any) => {
+                reject(err);
               }
-            });
+            );
           });
         }
       }

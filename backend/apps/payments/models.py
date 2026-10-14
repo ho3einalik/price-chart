@@ -34,11 +34,19 @@ class PaymentTransaction(TenantScopedModel):
     verified_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='verified_payments')
     verified_at = models.DateTimeField(null=True, blank=True)
     rejection_reason = models.TextField(blank=True, verbose_name="دلیل رد فیش")
+    idempotency_key = models.CharField(max_length=100, blank=True, db_index=True, verbose_name="کلید عدم تکرار")
 
     class Meta:
         verbose_name = 'تراکنش پرداخت'
         verbose_name_plural = 'تراکنش‌های پرداخت'
         ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['store', 'idempotency_key'],
+                condition=models.Q(idempotency_key__isnull=False) & ~models.Q(idempotency_key=''),
+                name='unique_store_payment_idempotency_key'
+            )
+        ]
 
     def __str__(self):
         return f"{self.amount} {self.currency} for {self.order.order_number} ({self.get_status_display()})"

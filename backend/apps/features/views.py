@@ -356,15 +356,41 @@ class IntegrationConfigView(APIView):
 
         name = serializer.validated_data['name']
         new_state = serializer.validated_data['state']
+        credentials = serializer.validated_data.get('credentials')
+
+        adapter = IntegrationRegistry.get_adapter(name)
+        if not adapter:
+            return Response(
+                {'error': f"سرویس '{name}' در سامانه یافت نشد."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        settings = FeatureService.get_or_create_settings(store)
+
+        # Securely persist credentials into feature_configs if provided
+        if credentials and isinstance(credentials, dict):
+            configs = dict(settings.feature_configs or {})
+            if name == 'sms_gateway':
+                api_key = credentials.get('api_key') or credentials.get('sms_api_key')
+                if api_key:
+                    configs['sms_api_key'] = str(api_key).strip()
+            elif name == 'ai_provider':
+                api_key = credentials.get('api_key') or credentials.get('gemini_api_key')
+                if api_key:
+                    configs['gemini_api_key'] = str(api_key).strip()
+            elif name == 'instagram':
+                token = credentials.get('token') or credentials.get('access_token') or credentials.get('api_key')
+                if token:
+                    configs['instagram_token'] = str(token).strip()
+            else:
+                for k, v in credentials.items():
+                    if k and v:
+                        configs[f"{name}_{k}"] = str(v).strip()
+            settings.feature_configs = configs
+            settings.save(update_fields=['feature_configs', 'updated_at'])
 
         # Prevent users from manually setting status to CONNECTED without a successful live health check
         if new_state == IntegrationState.CONNECTED:
-            adapter = IntegrationRegistry.get_adapter(name)
-            if not adapter:
-                return Response(
-                    {'error': f"سرویس '{name}' در سامانه یافت نشد."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
             health = adapter.health_check(store)
             if health.state != IntegrationState.CONNECTED:
                 return Response(
@@ -376,14 +402,14 @@ class IntegrationConfigView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-        settings = FeatureService.get_or_create_settings(store)
         states = dict(settings.integration_states or {})
         states[name] = new_state
         settings.integration_states = states
-        settings.save()
+        settings.save(update_fields=['integration_states', 'updated_at'])
 
+        # Response strictly omits credentials/secrets
         return Response({
             'name': name,
             'state': new_state,
-            'message': f"وضعیت اتصال سرویس '{name}' بروزرسانی شد."
+            'message': f"تنظیمات اتصال سرویس '{name}' با موفقیت بروزرسانی شد."
         })
