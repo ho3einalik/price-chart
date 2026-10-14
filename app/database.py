@@ -22,6 +22,25 @@ def get_db_connection() -> sqlite3.Connection:
 
 def init_db() -> None:
     """Initializes the database schema if it doesn't already exist."""
+    db_dir = os.path.dirname(os.path.abspath(DB_PATH))
+    os.makedirs(db_dir, exist_ok=True)
+
+    # Auto-seed database from pre-populated historical data if clean disk
+    if not os.path.exists(DB_PATH):
+        seed_candidates = [
+            os.path.join(os.getcwd(), "data_seed", "rates.db"),
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data_seed", "rates.db"),
+            os.path.join(os.getcwd(), "data", "rates.db"),
+        ]
+        for seed_file in seed_candidates:
+            if os.path.exists(seed_file) and os.path.abspath(seed_file) != os.path.abspath(DB_PATH):
+                import shutil
+                try:
+                    shutil.copyfile(seed_file, DB_PATH)
+                    break
+                except Exception:
+                    pass
+
     with get_db_connection() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS exchange_rates (
