@@ -231,26 +231,36 @@ def get_dashboard_data(days: Optional[int] = 30) -> Dict[str, Any]:
     return result
 
 
-def get_historical_table_data(limit: int = 15) -> List[Dict[str, Any]]:
+def get_historical_table_data(limit: Optional[int] = 100) -> List[Dict[str, Any]]:
     """
     Returns recent dates with USD, EUR, and AED rates formatted for a unified table.
+    If limit is None or <= 0, returns all available dates in the database.
     """
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT date, currency, rate
-            FROM exchange_rates
-            WHERE date IN (
-                SELECT DISTINCT date 
-                FROM exchange_rates 
-                ORDER BY date DESC 
-                LIMIT ?
+        if limit and limit > 0:
+            cursor.execute(
+                """
+                SELECT date, currency, rate
+                FROM exchange_rates
+                WHERE date IN (
+                    SELECT DISTINCT date 
+                    FROM exchange_rates 
+                    ORDER BY date DESC 
+                    LIMIT ?
+                )
+                ORDER BY date DESC, currency ASC;
+                """,
+                (limit,)
             )
-            ORDER BY date DESC, currency ASC;
-            """,
-            (limit,)
-        )
+        else:
+            cursor.execute(
+                """
+                SELECT date, currency, rate
+                FROM exchange_rates
+                ORDER BY date DESC, currency ASC;
+                """
+            )
         rows = cursor.fetchall()
 
     grouped: Dict[str, Dict[str, Any]] = {}

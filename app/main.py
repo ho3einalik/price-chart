@@ -172,6 +172,54 @@ async def get_history_table(limit: int = Query(default=100, ge=1, le=1000)):
     return JSONResponse(content={"records": rows, "count": len(rows)})
 
 
+@app.get("/api/export-csv")
+async def export_csv(days: Optional[str] = Query(default="all")):
+    """
+    Exports CSV formatted exchange rate records filtered by timeframe:
+    7 (past week), 15 (past 15 days), 30 (past 30 days), or all (full historical dataset).
+    """
+    limit: Optional[int] = None
+    timeframe_label = "all"
+    if days and days.lower() not in ("all", "0", "-1"):
+        try:
+            limit = int(days)
+            timeframe_label = f"{limit}d"
+        except ValueError:
+            limit = None
+            timeframe_label = "all"
+
+    records = get_historical_table_data(limit=limit)
+
+    import csv
+    import io
+    from fastapi.responses import Response
+
+    output = io.StringIO()
+    # Write UTF-8 BOM so spreadsheet apps (Excel, Numbers) open without encoding errors
+    output.write('\ufeff')
+    writer = csv.writer(output)
+    writer.writerow(["Date", "USD_RUB", "EUR_RUB", "AED_RUB"])
+    for r in records:
+        writer.writerow([
+            r.get("date", ""),
+            r.get("USD", ""),
+            r.get("EUR", ""),
+            r.get("AED", "")
+        ])
+
+    csv_data = output.getvalue()
+    today_str = date.today().strftime("%Y%m%d")
+    filename = f"cbr_rates_{timeframe_label}_{today_str}.csv"
+
+    return Response(
+        content=csv_data,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        }
+    )
+
+
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint for Docker / container orchestration."""
