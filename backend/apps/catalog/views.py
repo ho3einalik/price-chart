@@ -69,19 +69,18 @@ class ProductViewSet(viewsets.ModelViewSet):
         store = request.store
         items = serializer.validated_data['items']
 
-        updated_variants = 0
-        updated_products = 0
-        errors = []
-
-        default_warehouse = None
+        # Phase 1: Full validation of all rows before applying any mutations
+        row_errors = []
+        resolved_items = []
 
         for idx, item in enumerate(items):
-            variant = None
-            product = None
-
+            row_num = idx + 1
             variant_id = item.get('variant_id')
             sku = item.get('sku')
             product_id = item.get('product_id')
+
+            variant = None
+            product = None
 
             if variant_id:
                 variant = ProductVariant.objects.filter(id=variant_id, store=store).first()
@@ -94,8 +93,67 @@ class ProductViewSet(viewsets.ModelViewSet):
                 product = variant.product
 
             if not variant and not product:
-                errors.append(f"ردیف {idx + 1}: تنوع یا محصول با شناسه ارائه شده یافت نشد.")
+                row_errors.append({
+                    'row': row_num,
+                    'error': f"ردیف {row_num}: تنوع یا محصول با شناسه یا کد SKU ارائه شده در این فروشگاه یافت نشد."
+                })
                 continue
+
+            # Validate prices if provided
+            for price_field in ['retail_price', 'cost_price', 'wholesale_price']:
+                val = item.get(price_field)
+                if val is not None and val < 0:
+                    row_errors.append({
+                        'row': row_num,
+                        'error': f"ردیف {row_num}: فیلد '{price_field}' نمی‌تواند منفی باشد."
+                    })
+
+            # Validate stock quantity and warehouse if provided
+            target_wh = None
+            if 'stock_quantity' in item and item['stock_quantity'] is not None:
+                stock_qty = item['stock_quantity']
+                if stock_qty < 0:
+                    row_errors.append({
+                        'row': row_num,
+                        'error': f"ردیف {row_num}: موجودی انبار نمی‌تواند منفی باشد."
+                    })
+
+                wh_id = item.get('warehouse_id')
+                if wh_id:
+                    target_wh = Warehouse.objects.filter(id=wh_id, store=store).first()
+                    if not target_wh:
+                        row_errors.append({
+                            'row': row_num,
+                            'error': f"ردیف {row_num}: انبار مشخص‌شده با شناسه '{wh_id}' در این فروشگاه وجود ندارد."
+                        })
+
+            resolved_items.append({
+                'item': item,
+                'variant': variant,
+                'product': product,
+                'target_wh': target_wh
+            })
+
+        # If any row is invalid, abort immediately with 400 and full row error breakdown (strict atomicity)
+        if row_errors:
+            transaction.set_rollback(True)
+            return Response({
+                'message': 'اعتبارسنجی ردیف‌ها با خطا مواجه شد و به دلیل رعایت اتمیک بودن، هیچ تغییری در داده‌ها اعمال نگردید.',
+                'errors': row_errors,
+                'total_rows': len(items),
+                'failed_rows_count': len(row_errors)
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Phase 2: Execute all updates atomically
+        updated_variants = 0
+        updated_products = 0
+        default_warehouse = None
+
+        for entry in resolved_items:
+            item = entry['item']
+            variant = entry['variant']
+            product = entry['product']
+            target_wh = entry['target_wh']
 
             # Update product attributes
             if product and 'status' in item:
@@ -126,7 +184,6 @@ class ProductViewSet(viewsets.ModelViewSet):
                     variant.save()
                     updated_variants += 1
 
-                    # Track price history if retail or cost changed
                     if variant.retail_price != old_retail or variant.cost_price != old_cost:
                         ProductPriceHistory.objects.create(
                             store=store,
@@ -139,12 +196,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                             changed_by=request.user if request.user.is_authenticated else None
                         )
 
-                # Inventory adjustment if requested
                 if 'stock_quantity' in item and item['stock_quantity'] is not None:
-                    wh_id = item.get('warehouse_id')
-                    target_wh = None
-                    if wh_id:
-                        target_wh = Warehouse.objects.filter(id=wh_id, store=store).first()
                     if not target_wh:
                         if not default_warehouse:
                             default_warehouse = Warehouse.objects.filter(store=store, is_active=True).first()
@@ -162,10 +214,10 @@ class ProductViewSet(viewsets.ModelViewSet):
                     )
 
         return Response({
-            'message': 'عملیات بروزرسانی گروهی با موفقیت انجام شد.',
+            'message': 'عملیات بروزرسانی گروهی با موفقیت و به‌صورت اتمیک انجام شد.',
             'updated_variants': updated_variants,
             'updated_products': updated_products,
-            'errors': errors
+            'errors': []
         }, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['get'], url_path='export-csv')
@@ -189,32 +241,49 @@ class ProductViewSet(viewsets.ModelViewSet):
             'قیمت فروش (تومان)',
             'قیمت خرید (تومان)',
             'قیمت عمده (تومان)',
+            'نام انبار',
+            'کد انبار',
+            'موجودی در این انبار',
             'موجودی فیزیکی کل',
             'تاریخ ایجاد'
         ]
         writer.writerow(headers)
 
         variants = ProductVariant.objects.filter(store=store).select_related('product', 'product__category')
+        warehouses = list(Warehouse.objects.filter(store=store, is_active=True))
+        if not warehouses:
+            default_wh = Warehouse.objects.filter(store=store).first()
+            if not default_wh:
+                default_wh = Warehouse.objects.create(store=store, name="انبار اصلی", is_default=True)
+            warehouses = [default_wh]
+
         for v in variants:
             p = v.product
-            on_hand = v.balances.aggregate(s=models.Sum('on_hand_quantity'))['s'] or 0
-            row = [
-                sanitize_csv_cell(p.id),
-                sanitize_csv_cell(p.name),
-                sanitize_csv_cell(p.brand or ''),
-                sanitize_csv_cell(p.category.name if p.category else ''),
-                sanitize_csv_cell(p.get_status_display()),
-                sanitize_csv_cell(v.id),
-                sanitize_csv_cell(v.sku),
-                sanitize_csv_cell(v.barcode or ''),
-                sanitize_csv_cell(v.name),
-                sanitize_csv_cell(v.retail_price),
-                sanitize_csv_cell(v.cost_price),
-                sanitize_csv_cell(v.wholesale_price or 0),
-                sanitize_csv_cell(on_hand),
-                sanitize_csv_cell(v.created_at.strftime('%Y-%m-%d %H:%M') if v.created_at else '')
-            ]
-            writer.writerow(row)
+            total_on_hand = v.balances.aggregate(s=models.Sum('on_hand_quantity'))['s'] or 0
+
+            for wh in warehouses:
+                bal = v.balances.filter(warehouse=wh).first()
+                wh_qty = bal.on_hand_quantity if bal else 0
+                row = [
+                    sanitize_csv_cell(p.id),
+                    sanitize_csv_cell(p.name),
+                    sanitize_csv_cell(p.brand or ''),
+                    sanitize_csv_cell(p.category.name if p.category else ''),
+                    sanitize_csv_cell(p.get_status_display()),
+                    sanitize_csv_cell(v.id),
+                    sanitize_csv_cell(v.sku),
+                    sanitize_csv_cell(v.barcode or ''),
+                    sanitize_csv_cell(v.name),
+                    sanitize_csv_cell(v.retail_price),
+                    sanitize_csv_cell(v.cost_price),
+                    sanitize_csv_cell(v.wholesale_price or 0),
+                    sanitize_csv_cell(wh.name),
+                    sanitize_csv_cell(wh.code or ''),
+                    sanitize_csv_cell(wh_qty),
+                    sanitize_csv_cell(total_on_hand),
+                    sanitize_csv_cell(v.created_at.strftime('%Y-%m-%d %H:%M') if v.created_at else '')
+                ]
+                writer.writerow(row)
 
         response = HttpResponse(output.getvalue(), content_type='text/csv; charset=utf-8')
         response['Content-Disposition'] = f'attachment; filename="products_{store.id}.csv"'
@@ -242,7 +311,9 @@ class ProductViewSet(viewsets.ModelViewSet):
         updated_variants = 0
         errors = []
 
-        default_wh = Warehouse.objects.filter(store=store, is_active=True).first()
+        default_wh = Warehouse.objects.filter(store=store, is_default=True, is_active=True).first()
+        if not default_wh:
+            default_wh = Warehouse.objects.filter(store=store, is_active=True).first()
         if not default_wh:
             default_wh = Warehouse.objects.create(store=store, name="انبار پیش‌فرض", is_default=True)
 
@@ -255,8 +326,8 @@ class ProductViewSet(viewsets.ModelViewSet):
                 normalized_row.get('product_name') or normalized_row.get('name') or ''
             )
             sku = (
-                normalized_row.get('کد تنوع (sku)') or normalized_row.get('کد کالا') or
-                normalized_row.get('sku') or ''
+                normalized_row.get('کد تنوع (sku)') or normalized_row.get('کد تنوع') or
+                normalized_row.get('کد کالا') or normalized_row.get('sku') or ''
             )
             retail_price_raw = (
                 normalized_row.get('قیمت فروش (تومان)') or normalized_row.get('قیمت فروش') or
@@ -280,8 +351,14 @@ class ProductViewSet(viewsets.ModelViewSet):
                 normalized_row.get('برند') or normalized_row.get('brand') or ''
             )
             stock_raw = (
-                normalized_row.get('موجودی فیزیکی کل') or normalized_row.get('موجودی') or
-                normalized_row.get('stock') or normalized_row.get('quantity') or ''
+                normalized_row.get('موجودی در این انبار') or normalized_row.get('موجودی فیزیکی کل') or
+                normalized_row.get('موجودی') or normalized_row.get('stock') or normalized_row.get('quantity') or ''
+            )
+            wh_name = (
+                normalized_row.get('نام انبار') or normalized_row.get('انبار') or normalized_row.get('warehouse') or ''
+            )
+            wh_code = (
+                normalized_row.get('کد انبار') or normalized_row.get('warehouse_code') or ''
             )
 
             if not name and not sku:
@@ -360,17 +437,27 @@ class ProductViewSet(viewsets.ModelViewSet):
                     is_active=True
                 )
 
-            # Adjust stock if specified
+            # Determine target warehouse for inventory adjustment
+            target_wh = None
+            if wh_name:
+                target_wh = Warehouse.objects.filter(store=store, name__iexact=wh_name).first()
+            elif wh_code:
+                target_wh = Warehouse.objects.filter(store=store, code__iexact=wh_code).first()
+
+            if not target_wh:
+                target_wh = default_wh
+
+            # Adjust stock in target warehouse if specified
             if stock_raw != '':
                 try:
                     qty = int(stock_raw)
                     if qty >= 0:
                         adjust_stock(
                             store=store,
-                            warehouse=default_wh,
+                            warehouse=target_wh,
                             variant=variant,
                             new_on_hand=qty,
-                            reason="تنظیم موجودی اولیه از طریق ایمپورت CSV",
+                            reason=f"تنظیم موجودی از طریق ایمپورت CSV در انبار {target_wh.name}",
                             user=request.user
                         )
                 except (ValueError, TypeError):

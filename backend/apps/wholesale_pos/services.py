@@ -171,6 +171,9 @@ def convert_proforma_to_order(proforma, user=None):
     client = B2BClientProfile.objects.select_for_update().get(id=proforma.client_id)
     store = proforma.store
 
+    if not client.is_approved:
+        raise ValidationError(f"حساب مشتری عمده‌فروش '{client.company_name}' هنوز توسط مدیریت تأیید نشده است.")
+
     # Credit limit check
     if client.current_debt + proforma.grand_total > client.credit_limit:
         raise ValidationError(
@@ -273,9 +276,15 @@ def create_quick_sku_order(store, client, sku_items, notes='', user=None):
     """
     Rapid wholesale ordering using SKU list.
     Applies volume tier pricing and MOQ, generates a formal B2B Proforma.
+    Enforces client approval and pessimistic credit limit verification.
     """
     if not sku_items:
         raise ValidationError("حداقل یک قلم کالا با کد SKU الزامی است.")
+
+    # Concurrency safe client retrieval & approval check
+    client = B2BClientProfile.objects.select_for_update().get(id=client.id, store=store)
+    if not client.is_approved:
+        raise ValidationError(f"حساب مشتری عمده‌فروش '{client.company_name}' هنوز توسط مدیریت تأیید نشده است.")
 
     from datetime import timedelta
     items_json = []
@@ -317,6 +326,12 @@ def create_quick_sku_order(store, client, sku_items, notes='', user=None):
             'total_price': str(row_total),
             'tier_applied': tier.tier_label if tier else 'قیمت عمده استاندارد'
         })
+
+    # Credit limit validation under select_for_update lock
+    if client.current_debt + subtotal > client.credit_limit:
+        raise ValidationError(
+            f"مبلغ این سفارش ({subtotal:,} تومان) از سقف اعتبار باقیمانده همکار ({client.available_credit:,} تومان) فراتر می‌رود."
+        )
 
     invoice_number = f"PI-SKU-{timezone.now().strftime('%y%m%d')}-{uuid.uuid4().hex[:4].upper()}"
     valid_until = timezone.now() + timedelta(days=client.payment_terms_days or 14)

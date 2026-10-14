@@ -95,8 +95,12 @@ class TestSocialOperations:
         assert content.status == ContentStatus.SCHEDULED
         assert content.scheduled_at == scheduled_time
 
-        # 4. Mark published
-        SocialService.publish_content(content, published_url="https://instagram.com/p/DB123456", user=manager)
+        # 4. Submit proof & independent manager verification
+        SocialService.submit_proof(content, proof_url="https://instagram.com/p/DB123456", user=creator)
+        content.refresh_from_db()
+        assert content.status == ContentStatus.PENDING_PROOF_VERIFICATION
+
+        SocialService.verify_proof(content, manager_user=manager, approved=True)
         content.refresh_from_db()
         assert content.status == ContentStatus.PUBLISHED
         assert content.published_at is not None

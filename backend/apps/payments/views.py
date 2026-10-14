@@ -192,21 +192,63 @@ class PaymentTransactionViewSet(viewsets.ModelViewSet):
         if not callback_url:
             return fallback
 
-        from urllib.parse import urlparse
+        from urllib.parse import urlsplit
         from django.conf import settings
-        parsed = urlparse(callback_url)
-        if not parsed.netloc:
+
+        try:
+            parsed = urlsplit(callback_url.strip())
+        except Exception:
             return fallback
 
-        origin = f"{parsed.scheme}://{parsed.netloc}"
-        allowed_origins = list(getattr(settings, 'CORS_ALLOWED_ORIGINS', []))
-        trusted_origins = list(getattr(settings, 'CSRF_TRUSTED_ORIGINS', []))
-        current_host = request.get_host()
+        # 1. Strict scheme check: only https (or http in dev/debug)
+        allowed_schemes = ['https', 'http'] if getattr(settings, 'DEBUG', False) else ['https']
+        if not parsed.scheme or parsed.scheme.lower() not in allowed_schemes:
+            return fallback
 
-        if parsed.netloc == current_host or origin in allowed_origins or origin in trusted_origins:
-            return callback_url
+        # 2. Block userinfo (username / password in URL e.g. user:pass@host)
+        if parsed.username or parsed.password:
+            return fallback
 
-        return fallback
+        # 3. Check hostname
+        hostname = parsed.hostname
+        if not hostname:
+            return fallback
+        hostname = hostname.lower()
+
+        # 4. Check port: must be standard or match current host port
+        current_split = urlsplit(request.build_absolute_uri())
+        current_port = current_split.port
+        if parsed.port is not None:
+            if parsed.scheme == 'https' and parsed.port not in [443, current_port]:
+                return fallback
+            if parsed.scheme == 'http' and parsed.port not in [80, 8000, 3000, current_port]:
+                return fallback
+
+        # 5. Allowed hostnames matching
+        allowed_hostnames = set()
+        if current_split.hostname:
+            allowed_hostnames.add(current_split.hostname.lower())
+
+        for h in getattr(settings, 'ALLOWED_HOSTS', []):
+            if h and h != '*':
+                allowed_hostnames.add(h.lower().lstrip('.'))
+
+        for origin in list(getattr(settings, 'CORS_ALLOWED_ORIGINS', [])) + list(getattr(settings, 'CSRF_TRUSTED_ORIGINS', [])):
+            try:
+                sp = urlsplit(origin)
+                if sp.hostname:
+                    allowed_hostnames.add(sp.hostname.lower())
+            except Exception:
+                pass
+
+        store = getattr(request, 'store', None)
+        if store and hasattr(store, 'custom_domain') and store.custom_domain:
+            allowed_hostnames.add(store.custom_domain.lower())
+
+        if hostname not in allowed_hostnames:
+            return fallback
+
+        return callback_url.strip()
 
     @action(detail=False, methods=['get', 'post'], url_path='online-verify')
     def online_verify(self, request):

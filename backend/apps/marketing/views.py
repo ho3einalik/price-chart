@@ -221,9 +221,10 @@ class AbandonedCartViewSet(viewsets.ModelViewSet):
 
         elif res_status == 'SIMULATED':
             cart.delivery_status = RecoveryDeliveryStatus.SIMULATED
+            cart.recovery_sms_sent_at = timezone.now()
             cart.recovery_attempts += 1
             cart.last_delivery_error = 'شبیه‌سازی تستی'
-            cart.save(update_fields=['delivery_status', 'recovery_attempts', 'last_delivery_error'])
+            cart.save(update_fields=['delivery_status', 'recovery_sms_sent_at', 'recovery_attempts', 'last_delivery_error'])
             return Response({
                 'message': 'ارسال پیامک در وضعیت شبیه‌سازی انجام شد.',
                 'cart_id': str(cart.id),
@@ -233,8 +234,9 @@ class AbandonedCartViewSet(viewsets.ModelViewSet):
 
         elif res_status == 'NOT_CONFIGURED':
             cart.delivery_status = RecoveryDeliveryStatus.NOT_CONFIGURED
+            cart.recovery_attempts += 1
             cart.last_delivery_error = sms_res.get('message', 'درگاه پیامک در سیستم تنظیم نشده است.')
-            cart.save(update_fields=['delivery_status', 'last_delivery_error'])
+            cart.save(update_fields=['delivery_status', 'recovery_attempts', 'last_delivery_error'])
             return Response({
                 'error': 'درگاه پیامک در سیستم تنظیم نشده است. لطفاً ابتدا درگاه را پیکربندی نمایید.',
                 'delivery_status': cart.delivery_status,

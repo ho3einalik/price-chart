@@ -286,7 +286,7 @@ class FeatureService:
             from apps.catalog.models import Product
             current = Product.objects.filter(store=store).count()
             limit = limits.get('max_products', 50)
-            allowed = (current + increment) < limit if increment > 0 else (current < limit)
+            allowed = (current + increment) <= limit if increment > 0 else (current < limit)
             msg = f"سقف تعداد محصولات در پلن {settings.get_tier_display()} ({limit} محصول) تکمیل شده است. لطفاً پلن خود را ارتقا دهید." if not allowed else ""
             return allowed, current, limit, msg
 
@@ -294,7 +294,7 @@ class FeatureService:
             from apps.tenancy.models import StoreMembership, MembershipStatus
             current = StoreMembership.objects.filter(store=store, is_active=True, status=MembershipStatus.ACTIVE).count()
             limit = limits.get('max_members', 2)
-            allowed = (current + increment) < limit if increment > 0 else (current < limit)
+            allowed = (current + increment) <= limit if increment > 0 else (current < limit)
             msg = f"سقف تعداد اعضای تیم در پلن {settings.get_tier_display()} ({limit} نفر) تکمیل شده است. لطفاً پلن خود را ارتقا دهید." if not allowed else ""
             return allowed, current, limit, msg
 
@@ -303,7 +303,7 @@ class FeatureService:
             business = getattr(store, 'business', None)
             current = Store.objects.filter(business=business, is_active=True).count() if business else 1
             limit = limits.get('max_stores', 1)
-            allowed = (current + increment) < limit if increment > 0 else (current < limit)
+            allowed = (current + increment) <= limit if increment > 0 else (current < limit)
             msg = f"سقف تعداد فروشگاه‌های مجاز در این کسب‌وکار بر اساس پلن فعلی ({limit} فروشگاه) تکمیل شده است." if not allowed else ""
             return allowed, current, limit, msg
 
@@ -312,7 +312,7 @@ class FeatureService:
             start_of_month = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
             current = Order.objects.filter(store=store, created_at__gte=start_of_month).count()
             limit = limits.get('max_monthly_orders', 100)
-            allowed = (current + increment) < limit if increment > 0 else (current < limit)
+            allowed = (current + increment) <= limit if increment > 0 else (current < limit)
             msg = f"سقف سفارشات ماهانه در پلن {settings.get_tier_display()} ({limit} سفارش در ماه) تکمیل شده است." if not allowed else ""
             return allowed, current, limit, msg
 

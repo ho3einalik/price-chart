@@ -179,15 +179,30 @@ class SocialContentViewSet(viewsets.ModelViewSet):
         if content.creator_id == request.user.id and not is_owner_or_admin:
             raise PermissionDenied("تولیدکننده محتوا مجاز به تأیید و انتشار محتوای خود بدون بررسی مستقل توسط مدیر نیست.")
 
-        input_serializer = ContentPublishInputSerializer(data=request.data)
-        input_serializer.is_valid(raise_exception=True)
+        from .models import PublishingMode
+        if content.publishing_mode == PublishingMode.MANUAL_REMINDER:
+            published_url = request.data.get('published_url', '').strip()
+            proof_image_url = request.data.get('proof_image_url', '').strip()
+            if not published_url and not proof_image_url and not content.proof_url and not content.proof_image_url:
+                raise ValidationError("ثبت مدرک انتشار (آدرس پست یا تصویر) الزامی است.")
 
-        updated = SocialService.publish_content(
-            content=content,
-            published_url=input_serializer.validated_data.get('published_url', ''),
-            external_post_id=input_serializer.validated_data.get('external_post_id', ''),
-            user=request.user
-        )
+            # Record proof and verify it by the manager
+            SocialService.submit_proof(
+                content=content,
+                proof_url=published_url or content.proof_url,
+                proof_image_url=proof_image_url or content.proof_image_url,
+                user=request.user
+            )
+            updated = SocialService.verify_proof(
+                content=content,
+                manager_user=request.user,
+                approved=True,
+                notes="تأیید و انتشار با مدرک توسط مدیر"
+            )
+            return Response(SocialContentDetailSerializer(updated).data)
+
+        # In DIRECT_API mode, publish is performed via server-side dispatch
+        updated = SocialService.dispatch_direct_api_publish(content=content, user=request.user)
         return Response(SocialContentDetailSerializer(updated).data)
 
     @action(detail=True, methods=['post'], url_path='metrics')

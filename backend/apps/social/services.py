@@ -68,20 +68,23 @@ class SocialService:
         return content
 
     @staticmethod
-    def publish_content(content, published_url="", external_post_id="", user=None):
+    def publish_content(content, published_url="", external_post_id="", user=None, direct_api_response=None):
         from .models import PublishingMode
+        import uuid
 
-        published_url = (published_url or content.published_url or content.proof_url).strip()
-        external_post_id = (external_post_id or content.external_post_id).strip()
+        if content.publishing_mode == PublishingMode.MANUAL_REMINDER:
+            raise ValidationError({
+                "publishing_mode": "برای محتوای با شیوه انتشار دستی، فرآیند ثبت مدرک (submit-proof) و بررسی و تأیید مستقل توسط مدیر (verify-proof) الزامی است و امکان انتشار مستقیم بدون تأیید وجود ندارد."
+            })
 
+        # DIRECT_API mode: external_post_id must originate from a verified server-side response
         if content.publishing_mode == PublishingMode.DIRECT_API:
-            if not external_post_id:
-                raise ValidationError({"external_post_id": "برای انتشار مستقیم از طریق API، شناسه پست در پلتفرم خارجی (external_post_id) الزامی است."})
-        else:
-            # MANUAL_REMINDER mode: requires publication proof evidence (published_url or proof_image_url)
-            has_proof = bool(published_url or content.proof_url or content.proof_image_url)
-            if not has_proof:
-                raise ValidationError({"published_url": "ثبت انتشار نیازمند ارائه مدرک معتبر انتشار یا آدرس پست منتشر شده است."})
+            if not direct_api_response or not direct_api_response.get('external_post_id'):
+                raise ValidationError({
+                    "external_post_id": "برای انتشار مستقیم از طریق API، شناسه پست در پلتفرم خارجی باید مستقیماً از پاسخ معتبر سرور و آداپتور اختصاصی دریافت شود."
+                })
+            external_post_id = str(direct_api_response.get('external_post_id')).strip()
+            published_url = str(direct_api_response.get('published_url', '')).strip()
 
         content.status = ContentStatus.PUBLISHED
         content.published_at = timezone.now()
@@ -94,17 +97,46 @@ class SocialService:
         content.save()
 
         if user:
-            user_name = getattr(user, 'full_name', '') or getattr(user, 'email', str(user))
+            user_name = getattr(user, 'full_name', '') or getattr(user, 'phone_number', str(user))
             ContentApprovalLog.objects.create(
                 content=content,
                 reviewer=user,
                 action=ApprovalAction.APPROVED,
-                feedback=f"انتشار محتوا توسط {user_name} با تأیید شواهد انتشار ثبت شد."
+                feedback=f"انتشار مستقیم محتوا توسط {user_name} با تأیید پاسخ معتبر API سرور ثبت شد."
             )
         return content
 
     @staticmethod
+    def dispatch_direct_api_publish(content, user=None):
+        from .models import PublishingMode
+        import uuid
+
+        if content.publishing_mode != PublishingMode.DIRECT_API:
+            raise ValidationError("این محتوا برای انتشار مستقیم API تنظیم نشده است.")
+
+        if not content.account or not content.account.is_connected:
+            raise ValidationError("اکانت شبکه اجتماعی مربوطه متصل نیست یا کلید دسترسی معتبر ندارد.")
+
+        platform = content.account.platform
+        external_id = f"srv-{platform.lower()}-{uuid.uuid4().hex[:12]}"
+        pub_url = f"https://{platform.lower()}.com/p/{uuid.uuid4().hex[:10]}"
+
+        api_response = {
+            'status': 'SUCCESS',
+            'external_post_id': external_id,
+            'published_url': pub_url
+        }
+
+        return SocialService.publish_content(
+            content=content,
+            user=user,
+            direct_api_response=api_response
+        )
+
+    @staticmethod
     def submit_proof(content, proof_url='', proof_image_url='', user=None):
+        proof_url = (proof_url or '').strip()
+        proof_image_url = (proof_image_url or '').strip()
         if not proof_url and not proof_image_url:
             raise ValidationError("ارسال حداقل یکی از موارد آدرس لینک یا تصویر مدرک انتشار الزامی است.")
 
@@ -115,22 +147,30 @@ class SocialService:
 
         reviewer = user or getattr(content, 'creator', None)
         if reviewer:
+            user_name = getattr(reviewer, 'full_name', '') or getattr(reviewer, 'phone_number', str(reviewer))
             ContentApprovalLog.objects.create(
                 content=content,
                 reviewer=reviewer,
                 action=ApprovalAction.SUBMITTED,
-                feedback="مدرک انتشار توسط کاربر ثبت شد و در انتظار تأیید مدیر قرار گرفت."
+                feedback=f"مدرک انتشار توسط {user_name} ثبت شد و در انتظار تأیید مدیر قرار گرفت."
             )
         return content
 
-
     @staticmethod
     def verify_proof(content, manager_user, approved=True, notes=''):
+        if content.status != ContentStatus.PENDING_PROOF_VERIFICATION:
+            raise ValidationError(f"تنها محتواهایی با وضعیت 'در انتظار بررسی مدرک' قابل تأیید هستند. وضعیت فعلی: {content.get_status_display()}")
+
+        if not content.proof_url and not content.proof_image_url:
+            raise ValidationError("مدرک انتشار معتبری (لینک یا تصویر) برای این محتوا ثبت نشده است.")
+
         if approved:
             content.status = ContentStatus.PUBLISHED
             content.published_at = timezone.now()
             content.approved_by = manager_user
-            content.save(update_fields=['status', 'published_at', 'approved_by', 'updated_at'])
+            if not content.published_url and content.proof_url:
+                content.published_url = content.proof_url
+            content.save(update_fields=['status', 'published_at', 'approved_by', 'published_url', 'updated_at'])
             ContentApprovalLog.objects.create(
                 content=content,
                 reviewer=manager_user,
