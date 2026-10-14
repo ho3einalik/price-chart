@@ -12,7 +12,7 @@ An institutional-grade, dark-mode financial currency tracking terminal built wit
 - **View Modes:**
   - **Focused View:** Wide interactive chart with instant currency tabs (`USD`, `EUR`, `AED`).
   - **3-Grid View:** Side-by-side comparative layout for all 3 currencies.
-- **Daily Automated Cron Synchronization:** Automatically scrapes and saves fresh daily rates every day at **06:00 Moscow Time (MSK / UTC+3)** via `APScheduler`.
+- **Daily Automated Cron Synchronization:** Automatically scrapes and saves fresh daily rates every day at **18:00 (6:00 PM) Moscow Time (MSK / UTC+3)** via `APScheduler`.
 - **Automatic 30-Day Historical Backfill:** On initial startup, if fewer than 25 distinct dates exist, the system automatically scrapes and backfills the last 30 calendar days from CBR archives.
 - **Historical Ledger & CSV Export:** Built-in collapsible ledger table showing historical rates with one-click CSV export.
 - **Production Ready & Dockerized:** Runs out of the box with `docker compose up -d` on port `8050:8000`.
@@ -82,5 +82,5 @@ uvicorn app.main:app --host 0.0.0.0 --port 8050 --reload
 
 The app includes an integrated `AsyncIOScheduler` configured in FastAPI's `lifespan`:
 - **Timezone:** `Europe/Moscow` (UTC+3)
-- **Schedule:** Every day at **06:00 AM MSK**
+- **Schedule:** Every day at **18:00 (6:00 PM) MSK**
 - Manual triggers can be issued anytime via `POST /api/fetch-now` or through the **"Sync Now"** button on the UI.

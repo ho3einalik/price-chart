@@ -71,15 +71,15 @@ async def lifespan(app: FastAPI):
     # Launch historical backfill task in background so server starts responding immediately
     asyncio.create_task(check_and_backfill())
 
-    # Configure APScheduler for 06:00 Moscow Time (Europe/Moscow)
+    # Configure APScheduler for 18:00 (6:00 PM) Moscow Time (Europe/Moscow)
     scheduler.add_job(
         scheduled_daily_sync,
-        CronTrigger(hour=6, minute=0, timezone="Europe/Moscow"),
+        CronTrigger(hour=18, minute=0, timezone="Europe/Moscow"),
         id="cbr_daily_sync",
         replace_existing=True,
     )
     scheduler.start()
-    logger.info("APScheduler initialized: Scheduled run daily at 06:00 Moscow Time (Europe/Moscow).")
+    logger.info("APScheduler initialized: Scheduled run daily at 18:00 (6:00 PM) Moscow Time (Europe/Moscow).")
 
     yield
 
