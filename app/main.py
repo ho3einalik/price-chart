@@ -105,10 +105,19 @@ app.add_middleware(
 )
 
 
+def get_real_calendar_date() -> str:
+    """Returns the local calendar date in Asia/Tehran / Europe/Moscow timezone instead of raw server UTC."""
+    try:
+        import zoneinfo
+        return datetime.now(zoneinfo.ZoneInfo("Asia/Tehran")).strftime("%Y-%m-%d")
+    except Exception:
+        return datetime.now().strftime("%Y-%m-%d")
+
+
 @app.get("/", response_class=HTMLResponse)
 async def serve_dashboard(request: Request):
     """Renders the main institutional dark mode dashboard."""
-    real_today = date.today().strftime("%Y-%m-%d")
+    real_today = get_real_calendar_date()
     return templates.TemplateResponse(
         request=request,
         name="index.html",
@@ -135,7 +144,7 @@ async def get_dashboard_metrics(
 
     data = get_dashboard_data(parsed_days)
     data["backfill_status"] = backfill_state
-    data["real_today"] = date.today().strftime("%Y-%m-%d")
+    data["real_today"] = get_real_calendar_date()
     return JSONResponse(content=data)
 
 
