@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -106,18 +106,27 @@ app.add_middleware(
 
 
 def get_real_calendar_date() -> str:
-    """Returns the local calendar date in Asia/Tehran / Europe/Moscow timezone instead of raw server UTC."""
+    """Returns the calendar date strictly in Moscow timezone (Europe/Moscow / UTC+3)."""
     try:
         import zoneinfo
-        return datetime.now(zoneinfo.ZoneInfo("Asia/Tehran")).strftime("%Y-%m-%d")
+        return datetime.now(zoneinfo.ZoneInfo("Europe/Moscow")).strftime("%Y-%m-%d")
     except Exception:
-        return datetime.now().strftime("%Y-%m-%d")
+        return datetime.now(timezone(timedelta(hours=3))).strftime("%Y-%m-%d")
+
+
+def get_real_calendar_date_formatted() -> str:
+    """Returns the calendar date with short weekday strictly in Moscow timezone."""
+    try:
+        import zoneinfo
+        return datetime.now(zoneinfo.ZoneInfo("Europe/Moscow")).strftime("%Y-%m-%d (%a)")
+    except Exception:
+        return datetime.now(timezone(timedelta(hours=3))).strftime("%Y-%m-%d (%a)")
 
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_dashboard(request: Request):
     """Renders the main institutional dark mode dashboard."""
-    real_today = get_real_calendar_date()
+    real_today = get_real_calendar_date_formatted()
     return templates.TemplateResponse(
         request=request,
         name="index.html",
