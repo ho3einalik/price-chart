@@ -42,22 +42,35 @@ backfill_state: Dict[str, Any] = {
 }
 
 
-def parse_cbr_html(html_content: str, requested_date: date) -> List[Dict[str, Any]]:
+def parse_cbr_html(html_content: str, requested_date: Optional[date] = None) -> List[Dict[str, Any]]:
     """
     Parses the CBR HTML page and extracts USD, EUR, AED rates.
-    Per instructions:
-      - Unit = float(td[2].text.strip())
-      - Rate = float(td[4].text.strip().replace(',', '.'))
-      - final_rate = round(Rate / Unit, 4)
-      - Binds rates to the requested YYYY-MM-DD date.
+    Dynamically identifies the published date from the CBR page (UniDbQuery.To input)
+    to accurately handle next-day rate publications, falling back to requested_date if needed.
     """
     soup = BeautifulSoup(html_content, "html.parser")
     table = soup.find("table", class_="data")
     if not table:
-        logger.warning(f"No <table class='data'> found on CBR page for date {requested_date}.")
+        logger.warning("No <table class='data'> found on CBR page.")
         return []
 
-    date_str = requested_date.strftime("%Y-%m-%d")
+    # Detect the actual date published on the page
+    actual_date_str: Optional[str] = None
+    date_input = soup.find("input", {"name": "UniDbQuery.To"})
+    if date_input and date_input.get("value"):
+        val = date_input["value"].strip()
+        try:
+            actual_date_str = datetime.strptime(val, "%d.%m.%Y").strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+
+    if not actual_date_str and requested_date:
+        actual_date_str = requested_date.strftime("%Y-%m-%d")
+
+    if not actual_date_str:
+        actual_date_str = date.today().strftime("%Y-%m-%d")
+
+    date_str = actual_date_str
     now_iso = datetime.now(timezone.utc).isoformat()
     scraped_records: List[Dict[str, Any]] = []
 
@@ -94,25 +107,29 @@ async def scrape_single_date(
     client: httpx.AsyncClient, target_date: Optional[date] = None
 ) -> List[Dict[str, Any]]:
     """
-    Scrapes CBR for a specific date (or today if target_date is None).
+    Scrapes CBR for a specific date or fetches the latest available rate if target_date is None.
+    When target_date is None, fetches BASE_URL to obtain the freshest official rate.
     """
     if target_date is None:
-        target_date = date.today()
+        url = BASE_URL
+        date_label = "latest"
+    else:
+        date_formatted = target_date.strftime("%d.%m.%Y")
+        url = HISTORICAL_URL.format(date_str=date_formatted)
+        date_label = date_formatted
 
-    date_formatted = target_date.strftime("%d.%m.%Y")
-    url = HISTORICAL_URL.format(date_str=date_formatted)
-
-    logger.info(f"Fetching CBR rates for {date_formatted} from {url}")
+    logger.info(f"Fetching CBR rates ({date_label}) from {url}")
     try:
         response = await client.get(url, headers=HEADERS)
         response.raise_for_status()
         records = parse_cbr_html(response.text, target_date)
         if records:
             upsert_rates(records)
-            logger.info(f"Successfully scraped & upserted {len(records)} rates for {date_formatted}")
+            resolved_date = records[0]["date"] if records else date_label
+            logger.info(f"Successfully scraped & upserted {len(records)} rates for date {resolved_date}")
         return records
     except Exception as exc:
-        logger.error(f"Failed to fetch CBR rates for {date_formatted}: {exc}")
+        logger.error(f"Failed to fetch CBR rates for {date_label}: {exc}")
         return []
 
 

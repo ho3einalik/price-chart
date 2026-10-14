@@ -40,10 +40,10 @@ scheduler = AsyncIOScheduler()
 
 
 async def scheduled_daily_sync():
-    """Scheduled task executed daily at 12:00 PM and 16:00 PM server time."""
+    """Scheduled task executed daily at 18:15 Moscow time to fetch newest official CBR rates."""
     logger.info("Executing scheduled CBR daily rate synchronization...")
     async with httpx.AsyncClient(verify=False, timeout=15.0) as client:
-        await scrape_single_date(client, date.today())
+        await scrape_single_date(client, None)
     logger.info("Scheduled daily sync completed.")
 
 
@@ -51,20 +51,20 @@ async def scheduled_daily_sync():
 async def lifespan(app: FastAPI):
     """
     Lifespan context manager:
-      1. Initializes database schema.
-      2. If completely empty, quickly scrapes today's rate for instant availability.
+      1. Initializes database schema and auto-seeds if fresh disk.
+      2. If completely empty, quickly scrapes latest rates for instant availability.
       3. Launches 30-day historical backfill if distinct dates < 25.
-      4. Schedules daily cron jobs at 12:00 and 16:00.
+      4. Schedules daily cron job at 18:15 Moscow time.
     """
     logger.info("Starting up CBR Currency Tracker application...")
     init_db()
 
-    # Pre-fetch today's rates if database is clean to immediately populate hero cards
+    # Pre-fetch latest rates if database is clean to immediately populate hero cards
     if get_distinct_dates_count() == 0:
-        logger.info("Initial run detected. Scraping today's rates immediately for warm start...")
+        logger.info("Initial run detected. Scraping latest rates immediately for warm start...")
         try:
             async with httpx.AsyncClient(verify=False, timeout=15.0) as client:
-                await scrape_single_date(client, date.today())
+                await scrape_single_date(client, None)
         except Exception as e:
             logger.warning(f"Initial warm start scrape encountered: {e}")
 
@@ -136,13 +136,13 @@ async def get_dashboard_metrics(
 @app.post("/api/fetch-now")
 async def trigger_fetch_now():
     """
-    Manually triggers an immediate scrape of today's rates from CBR,
+    Manually triggers an immediate scrape of the freshest published rates from CBR,
     upserts them into SQLite, and returns the updated dashboard payload.
     """
     logger.info("Manual sync requested via POST /api/fetch-now")
     try:
         async with httpx.AsyncClient(verify=False, timeout=15.0) as client:
-            records = await scrape_single_date(client, date.today())
+            records = await scrape_single_date(client, None)
 
         # Return updated dashboard data
         data = get_dashboard_data(days=30)
