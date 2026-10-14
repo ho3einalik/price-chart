@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  cbr-tracker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cbr-currency-tracker
+    restart: unless-stopped
+    ports:
+      - "8050:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DATABASE_PATH=/app/data/rates.db

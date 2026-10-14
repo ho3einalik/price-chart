@@ -1,0 +1,987 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CBR Live Currency Terminal | RUB Exchange Rates</title>
+  
+  <!-- Google Fonts: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  
+  <!-- TailwindCSS via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            brand: {
+              usd: '#38bdf8',
+              eur: '#818cf8',
+              aed: '#fbbf24',
+            }
+          }
+        }
+      }
+    };
+  </script>
+  
+  <!-- ApexCharts via CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+  
+  <style>
+    /* Custom sleek scrollbar */
+    ::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #020617;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #1e293b;
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #334155;
+    }
+    
+    /* Live pulse animation */
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.35; transform: scale(0.8); }
+    }
+    .animate-pulse-dot {
+      animation: pulse-dot 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+
+    /* Subtle focused glow */
+    .glow-active-usd {
+      box-shadow: 0 0 25px -5px rgba(56, 189, 248, 0.25);
+      border-color: rgba(56, 189, 248, 0.5) !important;
+    }
+    .glow-active-eur {
+      box-shadow: 0 0 25px -5px rgba(129, 140, 248, 0.25);
+      border-color: rgba(129, 140, 248, 0.5) !important;
+    }
+    .glow-active-aed {
+      box-shadow: 0 0 25px -5px rgba(251, 191, 36, 0.25);
+      border-color: rgba(251, 191, 36, 0.5) !important;
+    }
+    
+    /* ApexChart dark tooltip styling */
+    .apexcharts-tooltip.apexcharts-theme-dark {
+      background: #0f172a !important;
+      border: 1px solid #334155 !important;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.7) !important;
+      border-radius: 8px !important;
+      font-family: 'JetBrains Mono', monospace !important;
+    }
+    .apexcharts-tooltip-title {
+      background: #1e293b !important;
+      border-bottom: 1px solid #334155 !important;
+      font-family: 'Inter', sans-serif !important;
+      font-size: 11px !important;
+      font-weight: 600 !important;
+      color: #cbd5e1 !important;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans selection:bg-cyan-500/30 selection:text-cyan-200 antialiased">
+
+  <!-- TOP MINIMALIST HEADER BAR -->
+  <header class="sticky top-0 z-50 backdrop-blur-xl bg-slate-950/85 border-b border-slate-800/80 px-4 sm:px-6 lg:px-8 py-3 transition-all">
+    <div class="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-3">
+      
+      <!-- Brand & Status -->
+      <div class="flex items-center gap-3 w-full md:w-auto justify-between md:justify-start">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center font-mono font-bold text-sm text-white shadow-md shadow-cyan-500/20">
+            ₽
+          </div>
+          <div>
+            <h1 class="text-sm sm:text-base font-bold tracking-tight text-white flex items-center gap-2">
+              CBR Live Currency Terminal
+              <span class="text-[10px] px-1.5 py-0.5 rounded font-mono font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">RUB</span>
+            </h1>
+            <p class="text-[11px] text-slate-400">Official Daily Fixing • Bank of Russia</p>
+          </div>
+        </div>
+
+        <!-- Live Status Pill (Mobile) -->
+        <div class="flex md:hidden items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[11px]">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse-dot"></span>
+          <span class="font-mono font-semibold">FEED ACTIVE</span>
+        </div>
+      </div>
+
+      <!-- Controls & Status -->
+      <div class="flex flex-wrap items-center justify-end gap-2.5 w-full md:w-auto">
+        
+        <!-- Live Status Badges (Desktop) -->
+        <div class="hidden sm:flex items-center gap-2 text-xs">
+          <!-- Moscow 06:00 Auto-Sync Badge -->
+          <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300" title="Scheduled to automatically update every day at 06:00 Moscow Time (MSK / UTC+3)">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse-dot"></span>
+            <span class="text-slate-400">Auto-Sync:</span>
+            <span class="font-mono font-medium text-slate-200">Daily @ 06:00 MSK</span>
+          </div>
+
+          <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300">
+            <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <span class="text-slate-400">Synced:</span>
+            <span id="badge-last-synced" class="font-mono font-medium text-slate-200">--:--</span>
+          </div>
+        </div>
+
+        <!-- Timeframe Selector -->
+        <div class="inline-flex p-0.5 bg-slate-900 border border-slate-800 rounded-lg text-xs" role="group">
+          <button type="button" onclick="setTimeframe('7')" id="tf-btn-7" class="timeframe-btn px-2.5 py-1 font-medium rounded-md text-slate-400 hover:text-white transition-all">
+            7D
+          </button>
+          <button type="button" onclick="setTimeframe('30')" id="tf-btn-30" class="timeframe-btn px-2.5 py-1 font-semibold rounded-md bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 transition-all">
+            30D
+          </button>
+          <button type="button" onclick="setTimeframe('all')" id="tf-btn-all" class="timeframe-btn px-2.5 py-1 font-medium rounded-md text-slate-400 hover:text-white transition-all">
+            All
+          </button>
+        </div>
+
+        <!-- Sync Button -->
+        <button id="btn-sync-now" onclick="syncRatesNow()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white shadow-md shadow-cyan-600/20 border border-cyan-400/30 transition-all active:scale-95 disabled:opacity-50 cursor-pointer">
+          <svg id="sync-icon" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+          </svg>
+          <span id="sync-text">Sync Now</span>
+        </button>
+
+      </div>
+    </div>
+  </header>
+
+  <!-- MAIN CONTAINER -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 space-y-6">
+
+    <!-- BACKFILL PROGRESS BANNER (Dynamic if initial run is running) -->
+    <div id="backfill-banner" class="hidden rounded-xl bg-slate-900 border border-cyan-500/30 p-3.5 transition-all">
+      <div class="flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div class="flex items-center gap-3">
+          <svg class="w-4 h-4 animate-spin text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+          </svg>
+          <div>
+            <h4 class="text-xs font-semibold text-white">Backfill in Progress</h4>
+            <p id="backfill-desc" class="text-[11px] text-slate-400">Syncing 30 days of historical data from CBR...</p>
+          </div>
+        </div>
+        <div class="w-full sm:w-56">
+          <div class="flex justify-between text-[11px] font-mono mb-1 text-slate-400">
+            <span id="backfill-dates-count">0/30 days</span>
+            <span id="backfill-percent">0%</span>
+          </div>
+          <div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+            <div id="backfill-bar" class="h-full bg-cyan-500 rounded-full transition-all duration-300" style="width: 0%"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- NOTIFICATION TOAST -->
+    <div id="toast" class="fixed bottom-6 right-6 z-50 transform translate-y-20 opacity-0 transition-all duration-300 pointer-events-none">
+      <div class="flex items-center gap-2.5 px-3.5 py-2.5 rounded-lg bg-slate-900/95 border border-slate-700 shadow-2xl text-xs">
+        <span id="toast-icon" class="text-emerald-400">●</span>
+        <span id="toast-msg" class="text-slate-200 font-medium">Message</span>
+      </div>
+    </div>
+
+    <!-- SECTION 1: JUMBO HERO PRICE CARDS -->
+    <section>
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+
+        <!-- CARD 1: USD / RUB -->
+        <div id="card-usd" onclick="selectCurrency('USD')" class="relative bg-slate-900/70 hover:bg-slate-900/95 backdrop-blur-md rounded-2xl p-5 border border-slate-800 hover:border-cyan-500/40 transition-all duration-200 cursor-pointer group">
+          <!-- Top indicator line -->
+          <div class="absolute top-0 left-0 right-0 h-[2px] bg-cyan-400/80 rounded-t-2xl"></div>
+          
+          <!-- Top Row -->
+          <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-2">
+              <span class="text-xl leading-none">🇺🇸</span>
+              <div>
+                <span class="font-mono font-bold text-sm text-white tracking-wide">USD / RUB</span>
+                <span class="text-[11px] text-slate-400 block font-sans">US Dollar</span>
+              </div>
+            </div>
+            <div class="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/60 text-[11px] font-mono text-slate-300">
+              <span id="usd-date">--</span>
+            </div>
+          </div>
+
+          <!-- Centerpiece: JUMBO PRICE -->
+          <div class="my-3">
+            <div class="flex items-baseline justify-between flex-wrap gap-2">
+              <div class="flex items-baseline">
+                <span id="usd-price" class="text-5xl font-extrabold font-mono tracking-tight text-white">
+                  --.----
+                </span>
+                <span class="text-2xl font-light text-slate-400 ml-1 font-sans">₽</span>
+              </div>
+              
+              <!-- Delta Pill -->
+              <div id="usd-delta-pill" class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono font-bold border transition-all">
+                <span id="usd-delta-arrow">▲</span>
+                <span id="usd-delta-abs">0.0000 ₽</span>
+                <span id="usd-delta-pct" class="text-[10px] opacity-80">(0.00%)</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom Sub-Metrics Row -->
+          <div class="pt-3 border-t border-slate-800/80 grid grid-cols-3 gap-2 text-center font-mono text-[11px]">
+            <div class="py-1 px-1 rounded bg-slate-950/40">
+              <span class="block text-[10px] text-slate-400 uppercase">Yesterday</span>
+              <span id="usd-prev" class="font-semibold text-slate-200">--.---- ₽</span>
+            </div>
+            <div class="py-1 px-1 rounded bg-slate-950/40">
+              <span class="block text-[10px] text-slate-400 uppercase">30D High</span>
+              <span id="usd-high" class="font-semibold text-emerald-400">--.---- ₽</span>
+            </div>
+            <div class="py-1 px-1 rounded bg-slate-950/40">
+              <span class="block text-[10px] text-slate-400 uppercase">30D Low</span>
+              <span id="usd-low" class="font-semibold text-rose-400">--.---- ₽</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- CARD 2: EUR / RUB -->
+        <div id="card-eur" onclick="selectCurrency('EUR')" class="relative bg-slate-900/70 hover:bg-slate-900/95 backdrop-blur-md rounded-2xl p-5 border border-slate-800 hover:border-indigo-500/40 transition-all duration-200 cursor-pointer group">
+          <!-- Top indicator line -->
+          <div class="absolute top-0 left-0 right-0 h-[2px] bg-indigo-400/80 rounded-t-2xl"></div>
+          
+          <!-- Top Row -->
+          <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-2">
+              <span class="text-xl leading-none">🇪🇺</span>
+              <div>
+                <span class="font-mono font-bold text-sm text-white tracking-wide">EUR / RUB</span>
+                <span class="text-[11px] text-slate-400 block font-sans">Euro</span>
+              </div>
+            </div>
+            <div class="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/60 text-[11px] font-mono text-slate-300">
+              <span id="eur-date">--</span>
+            </div>
+          </div>
+
+          <!-- Centerpiece: JUMBO PRICE -->
+          <div class="my-3">
+            <div class="flex items-baseline justify-between flex-wrap gap-2">
+              <div class="flex items-baseline">
+                <span id="eur-price" class="text-5xl font-extrabold font-mono tracking-tight text-white">
+                  --.----
+                </span>
+                <span class="text-2xl font-light text-slate-400 ml-1 font-sans">₽</span>
+              </div>
+              
+              <!-- Delta Pill -->
+              <div id="eur-delta-pill" class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono font-bold border transition-all">
+                <span id="eur-delta-arrow">▲</span>
+                <span id="eur-delta-abs">0.0000 ₽</span>
+                <span id="eur-delta-pct" class="text-[10px] opacity-80">(0.00%)</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom Sub-Metrics Row -->
+          <div class="pt-3 border-t border-slate-800/80 grid grid-cols-3 gap-2 text-center font-mono text-[11px]">
+            <div class="py-1 px-1 rounded bg-slate-950/40">
+              <span class="block text-[10px] text-slate-400 uppercase">Yesterday</span>
+              <span id="eur-prev" class="font-semibold text-slate-200">--.---- ₽</span>
+            </div>
+            <div class="py-1 px-1 rounded bg-slate-950/40">
+              <span class="block text-[10px] text-slate-400 uppercase">30D High</span>
+              <span id="eur-high" class="font-semibold text-emerald-400">--.---- ₽</span>
+            </div>
+            <div class="py-1 px-1 rounded bg-slate-950/40">
+              <span class="block text-[10px] text-slate-400 uppercase">30D Low</span>
+              <span id="eur-low" class="font-semibold text-rose-400">--.---- ₽</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- CARD 3: AED / RUB -->
+        <div id="card-aed" onclick="selectCurrency('AED')" class="relative bg-slate-900/70 hover:bg-slate-900/95 backdrop-blur-md rounded-2xl p-5 border border-slate-800 hover:border-amber-500/40 transition-all duration-200 cursor-pointer group">
+          <!-- Top indicator line -->
+          <div class="absolute top-0 left-0 right-0 h-[2px] bg-amber-400/80 rounded-t-2xl"></div>
+          
+          <!-- Top Row -->
+          <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-2">
+              <span class="text-xl leading-none">🇦🇪</span>
+              <div>
+                <span class="font-mono font-bold text-sm text-white tracking-wide">AED / RUB</span>
+                <span class="text-[11px] text-slate-400 block font-sans">UAE Dirham</span>
+              </div>
+            </div>
+            <div class="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/60 text-[11px] font-mono text-slate-300">
+              <span id="aed-date">--</span>
+            </div>
+          </div>
+
+          <!-- Centerpiece: JUMBO PRICE -->
+          <div class="my-3">
+            <div class="flex items-baseline justify-between flex-wrap gap-2">
+              <div class="flex items-baseline">
+                <span id="aed-price" class="text-5xl font-extrabold font-mono tracking-tight text-white">
+                  --.----
+                </span>
+                <span class="text-2xl font-light text-slate-400 ml-1 font-sans">₽</span>
+              </div>
+              
+              <!-- Delta Pill -->
+              <div id="aed-delta-pill" class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono font-bold border transition-all">
+                <span id="aed-delta-arrow">▲</span>
+                <span id="aed-delta-abs">0.0000 ₽</span>
+                <span id="aed-delta-pct" class="text-[10px] opacity-80">(0.00%)</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom Sub-Metrics Row -->
+          <div class="pt-3 border-t border-slate-800/80 grid grid-cols-3 gap-2 text-center font-mono text-[11px]">
+            <div class="py-1 px-1 rounded bg-slate-950/40">
+              <span class="block text-[10px] text-slate-400 uppercase">Yesterday</span>
+              <span id="aed-prev" class="font-semibold text-slate-200">--.---- ₽</span>
+            </div>
+            <div class="py-1 px-1 rounded bg-slate-950/40">
+              <span class="block text-[10px] text-slate-400 uppercase">30D High</span>
+              <span id="aed-high" class="font-semibold text-emerald-400">--.---- ₽</span>
+            </div>
+            <div class="py-1 px-1 rounded bg-slate-950/40">
+              <span class="block text-[10px] text-slate-400 uppercase">30D Low</span>
+              <span id="aed-low" class="font-semibold text-rose-400">--.---- ₽</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- SECTION 2: STREAMLINED & HIGH-LEGIBILITY INTERACTIVE CHARTS -->
+    <section class="bg-slate-900/70 backdrop-blur-md rounded-2xl p-5 border border-slate-800 transition-all">
+      
+      <!-- Chart Controls Header -->
+      <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-4 border-b border-slate-800/80">
+        
+        <!-- Currency Tab Selector -->
+        <div class="flex items-center gap-1 p-1 bg-slate-950/60 rounded-xl border border-slate-800 text-xs">
+          <button type="button" onclick="selectCurrency('USD')" id="tab-curr-USD" class="px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+            <span>🇺🇸</span> USD / RUB
+          </button>
+          <button type="button" onclick="selectCurrency('EUR')" id="tab-curr-EUR" class="px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 text-slate-400 hover:text-white">
+            <span>🇪🇺</span> EUR / RUB
+          </button>
+          <button type="button" onclick="selectCurrency('AED')" id="tab-curr-AED" class="px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 text-slate-400 hover:text-white">
+            <span>🇦🇪</span> AED / RUB
+          </button>
+          <button type="button" onclick="toggleViewMode()" id="tab-view-mode" class="ml-1 px-2.5 py-1.5 rounded-lg font-medium transition-all text-slate-400 hover:text-white border border-transparent hover:border-slate-700 text-[11px]" title="Toggle between single focused chart and 3-grid side-by-side view">
+            <span id="view-mode-label">Show 3-Grid View</span>
+          </button>
+        </div>
+
+        <!-- Stats indicator -->
+        <div class="text-xs font-mono text-slate-400 flex items-center gap-3">
+          <span id="chart-focused-stats">Loading chart range...</span>
+        </div>
+      </div>
+
+      <!-- VIEW 1: SINGLE FOCUSED LARGE CHART (Clean & Readable) -->
+      <div id="container-focused-chart" class="pt-4">
+        <div id="chart-focused" class="w-full h-80"></div>
+      </div>
+
+      <!-- VIEW 2: 3-GRID SIDE-BY-SIDE CHARTS (Optional toggled view) -->
+      <div id="container-grid-charts" class="hidden pt-4 grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-bold text-cyan-400 flex items-center gap-1.5">
+              <span>🇺🇸</span> USD / RUB
+            </span>
+            <span id="usd-grid-stat" class="text-[11px] font-mono text-slate-400"></span>
+          </div>
+          <div id="chart-grid-usd" class="w-full h-56"></div>
+        </div>
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-bold text-indigo-400 flex items-center gap-1.5">
+              <span>🇪🇺</span> EUR / RUB
+            </span>
+            <span id="eur-grid-stat" class="text-[11px] font-mono text-slate-400"></span>
+          </div>
+          <div id="chart-grid-eur" class="w-full h-56"></div>
+        </div>
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+              <span>🇦🇪</span> AED / RUB
+            </span>
+            <span id="aed-grid-stat" class="text-[11px] font-mono text-slate-400"></span>
+          </div>
+          <div id="chart-grid-aed" class="w-full h-56"></div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- SECTION 3: COLLAPSIBLE HISTORICAL RATES LEDGER -->
+    <section class="bg-slate-900/60 backdrop-blur-md rounded-2xl border border-slate-800 transition-all overflow-hidden">
+      
+      <!-- Collapsible Header Accordion -->
+      <button onclick="toggleLedgerTable()" class="w-full p-4 flex items-center justify-between text-left hover:bg-slate-800/40 transition-colors cursor-pointer">
+        <div class="flex items-center gap-2.5">
+          <svg id="ledger-chevron" class="w-4 h-4 text-slate-400 transition-transform duration-200 transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+          </svg>
+          <div>
+            <h3 class="text-xs font-semibold text-white flex items-center gap-2">
+              Historical Rates Ledger
+              <span class="text-[11px] font-normal text-slate-400">(Official CBR Records in SQLite)</span>
+            </h3>
+          </div>
+        </div>
+        
+        <div class="flex items-center gap-2 text-xs font-mono">
+          <span onclick="event.stopPropagation(); downloadCSV();" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors flex items-center gap-1 text-[11px] cursor-pointer">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+            </svg>
+            Export CSV
+          </span>
+        </div>
+      </button>
+
+      <!-- Expandable Table Body (Shown by default or easily closed) -->
+      <div id="ledger-table-container" class="border-t border-slate-800/80 overflow-x-auto max-h-72">
+        <table class="w-full text-left border-collapse text-xs font-mono">
+          <thead class="sticky top-0 bg-slate-950/90 backdrop-blur border-b border-slate-800 text-slate-400 text-[11px]">
+            <tr>
+              <th class="py-2.5 px-5 font-semibold">Effective Date</th>
+              <th class="py-2.5 px-5 font-semibold text-right">USD / RUB</th>
+              <th class="py-2.5 px-5 font-semibold text-right">EUR / RUB</th>
+              <th class="py-2.5 px-5 font-semibold text-right">AED / RUB</th>
+              <th class="py-2.5 px-5 font-semibold text-right">Source</th>
+            </tr>
+          </thead>
+          <tbody id="table-body" class="divide-y divide-slate-800/40 text-slate-300">
+            <tr>
+              <td colspan="5" class="py-5 text-center text-slate-500">Loading ledger data...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- FOOTER -->
+  <footer class="border-t border-slate-800/70 mt-8 py-5 px-4 text-center text-[11px] text-slate-500 font-mono">
+    <div class="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
+      <p>Source: Central Bank of the Russian Federation (cbr.ru)</p>
+      <p>Auto-Sync: Daily @ 06:00 Moscow Time (MSK / UTC+3)</p>
+      <p>Storage: Local SQLite (<code class="text-slate-400">./data/rates.db</code>)</p>
+    </div>
+  </footer>
+
+  <!-- CLIENT-SIDE APPLICATION LOGIC -->
+  <script>
+    // State management
+    let currentTimeframe = '30';
+    let currentCurrency = 'USD';
+    let isGridView = false;
+    let isLedgerOpen = true;
+    let isSyncing = false;
+    let dashboardPayload = null;
+    let cachedTableData = [];
+
+    // Chart instances
+    let chartFocused = null;
+    let chartGridUSD = null;
+    let chartGridEUR = null;
+    let chartGridAED = null;
+
+    const CURRENCY_CONFIG = {
+      USD: { name: 'USD / RUB', color: '#38bdf8', flag: '🇺🇸', glowClass: 'glow-active-usd' },
+      EUR: { name: 'EUR / RUB', color: '#818cf8', flag: '🇪🇺', glowClass: 'glow-active-eur' },
+      AED: { name: 'AED / RUB', color: '#fbbf24', flag: '🇦🇪', glowClass: 'glow-active-aed' },
+    };
+
+    // Toast notification utility
+    function showToast(message, isError = false) {
+      const toast = document.getElementById('toast');
+      const msg = document.getElementById('toast-msg');
+      const icon = document.getElementById('toast-icon');
+      
+      msg.textContent = message;
+      icon.textContent = isError ? '✕' : '●';
+      icon.className = isError ? 'text-rose-400' : 'text-emerald-400';
+      
+      toast.classList.remove('translate-y-20', 'opacity-0');
+      toast.classList.add('translate-y-0', 'opacity-100');
+
+      setTimeout(() => {
+        toast.classList.remove('translate-y-0', 'opacity-100');
+        toast.classList.add('translate-y-20', 'opacity-0');
+      }, 3000);
+    }
+
+    // Common ApexCharts option generator
+    function buildChartOptions(color, name, height = 300) {
+      return {
+        series: [{ name: name, data: [] }],
+        chart: {
+          type: 'area',
+          height: height,
+          toolbar: { show: false },
+          zoom: { enabled: false },
+          background: 'transparent',
+          animations: {
+            enabled: true,
+            easing: 'easeinout',
+            speed: 400,
+          }
+        },
+        colors: [color],
+        stroke: {
+          curve: 'smooth',
+          width: 2.5,
+        },
+        fill: {
+          type: 'gradient',
+          gradient: {
+            shadeIntensity: 1,
+            opacityFrom: 0.40,
+            opacityTo: 0.02,
+            stops: [0, 95, 100]
+          }
+        },
+        dataLabels: { enabled: false },
+        markers: {
+          size: 0,
+          hover: { size: 5, strokeWidth: 2, strokeColor: '#0f172a' }
+        },
+        grid: {
+          borderColor: '#1e293b',
+          strokeDashArray: 2,
+          xaxis: { lines: { show: false } },
+          yaxis: { lines: { show: true } }
+        },
+        xaxis: {
+          type: 'category',
+          categories: [],
+          axisBorder: { color: '#334155' },
+          axisTicks: { color: '#334155' },
+          labels: {
+            rotate: 0,
+            style: {
+              colors: '#64748b',
+              fontSize: '10px',
+              fontFamily: 'JetBrains Mono, monospace',
+            }
+          }
+        },
+        yaxis: {
+          forceNiceScale: true,
+          labels: {
+            style: {
+              colors: '#64748b',
+              fontSize: '10px',
+              fontFamily: 'JetBrains Mono, monospace',
+            },
+            formatter: function (value) {
+              return value != null ? value.toFixed(2) + ' ₽' : '';
+            }
+          }
+        },
+        tooltip: {
+          theme: 'dark',
+          x: { show: true },
+          y: {
+            formatter: function (val) {
+              return val != null ? val.toFixed(4) + ' ₽' : '';
+            }
+          }
+        }
+      };
+    }
+
+    // Initialize charts
+    function initCharts() {
+      // 1. Focused Main Chart
+      chartFocused = new ApexCharts(
+        document.getElementById('chart-focused'),
+        buildChartOptions(CURRENCY_CONFIG.USD.color, CURRENCY_CONFIG.USD.name, 310)
+      );
+      chartFocused.render();
+
+      // 2. Grid Charts (lazy initialized / rendered)
+      chartGridUSD = new ApexCharts(document.getElementById('chart-grid-usd'), buildChartOptions(CURRENCY_CONFIG.USD.color, 'USD', 210));
+      chartGridEUR = new ApexCharts(document.getElementById('chart-grid-eur'), buildChartOptions(CURRENCY_CONFIG.EUR.color, 'EUR', 210));
+      chartGridAED = new ApexCharts(document.getElementById('chart-grid-aed'), buildChartOptions(CURRENCY_CONFIG.AED.color, 'AED', 210));
+
+      chartGridUSD.render();
+      chartGridEUR.render();
+      chartGridAED.render();
+    }
+
+    // Toggle between Focused View and 3-Grid View
+    function toggleViewMode() {
+      isGridView = !isGridView;
+      const focusedContainer = document.getElementById('container-focused-chart');
+      const gridContainer = document.getElementById('container-grid-charts');
+      const label = document.getElementById('view-mode-label');
+
+      if (isGridView) {
+        focusedContainer.classList.add('hidden');
+        gridContainer.classList.remove('hidden');
+        label.textContent = 'Show Focused View';
+        updateGridCharts();
+      } else {
+        focusedContainer.classList.remove('hidden');
+        gridContainer.classList.add('hidden');
+        label.textContent = 'Show 3-Grid View';
+        updateFocusedChart();
+      }
+    }
+
+    // Select Active Currency (USD, EUR, AED)
+    function selectCurrency(curr) {
+      currentCurrency = curr;
+      
+      // Update top tab buttons
+      ['USD', 'EUR', 'AED'].forEach(c => {
+        const tab = document.getElementById(`tab-curr-${c}`);
+        const card = document.getElementById(`card-${c.toLowerCase()}`);
+        
+        if (c === curr) {
+          const cfg = CURRENCY_CONFIG[c];
+          tab.className = `px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 bg-${c === 'USD' ? 'cyan' : c === 'EUR' ? 'indigo' : 'amber'}-500/20 text-${c === 'USD' ? 'cyan' : c === 'EUR' ? 'indigo' : 'amber'}-300 border border-${c === 'USD' ? 'cyan' : c === 'EUR' ? 'indigo' : 'amber'}-500/30`;
+          card.classList.add(cfg.glowClass);
+        } else {
+          tab.className = 'px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 text-slate-400 hover:text-white';
+          card.classList.remove(CURRENCY_CONFIG[c].glowClass);
+        }
+      });
+
+      // If in grid view and user selects a currency, switch to focused view
+      if (isGridView) {
+        toggleViewMode();
+      } else {
+        updateFocusedChart();
+      }
+    }
+
+    // Update Hero Card UI values
+    function updateHeroCard(prefix, data) {
+      if (!data) return;
+
+      const priceEl = document.getElementById(`${prefix}-price`);
+      const dateEl = document.getElementById(`${prefix}-date`);
+      const prevEl = document.getElementById(`${prefix}-prev`);
+      const highEl = document.getElementById(`${prefix}-high`);
+      const lowEl = document.getElementById(`${prefix}-low`);
+      
+      const pillEl = document.getElementById(`${prefix}-delta-pill`);
+      const arrowEl = document.getElementById(`${prefix}-delta-arrow`);
+      const absEl = document.getElementById(`${prefix}-delta-abs`);
+      const pctEl = document.getElementById(`${prefix}-delta-pct`);
+
+      priceEl.textContent = (data.current_rate || 0).toFixed(4);
+      dateEl.textContent = data.current_date || '--';
+      prevEl.textContent = `${(data.previous_rate || 0).toFixed(4)} ₽`;
+      highEl.textContent = `${(data.high_30d || 0).toFixed(4)} ₽`;
+      lowEl.textContent = `${(data.low_30d || 0).toFixed(4)} ₽`;
+
+      const changeAbs = data.change_abs || 0;
+      const changePct = data.change_pct || 0;
+
+      if (changeAbs > 0) {
+        pillEl.className = 'inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30';
+        arrowEl.textContent = '▲';
+        absEl.textContent = `+${changeAbs.toFixed(4)} ₽`;
+        pctEl.textContent = `(+${changePct.toFixed(2)}%)`;
+      } else if (changeAbs < 0) {
+        pillEl.className = 'inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30';
+        arrowEl.textContent = '▼';
+        absEl.textContent = `${changeAbs.toFixed(4)} ₽`;
+        pctEl.textContent = `(${changePct.toFixed(2)}%)`;
+      } else {
+        pillEl.className = 'inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono font-bold bg-slate-800 text-slate-300 border border-slate-700';
+        arrowEl.textContent = '—';
+        absEl.textContent = `0.0000 ₽`;
+        pctEl.textContent = `(0.00%)`;
+      }
+    }
+
+    // Update Focused Single Chart
+    function updateFocusedChart() {
+      if (!dashboardPayload || !dashboardPayload[currentCurrency]) return;
+      const curData = dashboardPayload[currentCurrency];
+      const cfg = CURRENCY_CONFIG[currentCurrency];
+
+      const dates = (curData.history || []).map(item => {
+        const parts = item.date.split('-');
+        return parts.length === 3 ? `${parts[1]}.${parts[2]}` : item.date;
+      });
+      const rates = (curData.history || []).map(item => item.rate);
+
+      chartFocused.updateOptions({
+        colors: [cfg.color],
+        xaxis: { categories: dates },
+        series: [{ name: cfg.name, data: rates }]
+      });
+
+      // Update stat pill
+      if (rates.length > 0) {
+        const minVal = Math.min(...rates).toFixed(4);
+        const maxVal = Math.max(...rates).toFixed(4);
+        const statsEl = document.getElementById('chart-focused-stats');
+        statsEl.innerHTML = `Range: <span class="text-slate-200">${minVal} ₽</span> — <span class="text-slate-200">${maxVal} ₽</span> (${rates.length} days recorded)`;
+      }
+    }
+
+    // Update 3-Grid Charts
+    function updateGridCharts() {
+      if (!dashboardPayload) return;
+
+      ['USD', 'EUR', 'AED'].forEach(c => {
+        const chart = c === 'USD' ? chartGridUSD : c === 'EUR' ? chartGridEUR : chartGridAED;
+        const curData = dashboardPayload[c];
+        if (!curData || !chart) return;
+
+        const dates = (curData.history || []).map(item => {
+          const parts = item.date.split('-');
+          return parts.length === 3 ? `${parts[1]}.${parts[2]}` : item.date;
+        });
+        const rates = (curData.history || []).map(item => item.rate);
+
+        chart.updateOptions({
+          xaxis: { categories: dates },
+          series: [{ data: rates }]
+        });
+
+        const statEl = document.getElementById(`${c.toLowerCase()}-grid-stat`);
+        if (statEl && rates.length > 0) {
+          statEl.textContent = `${Math.min(...rates).toFixed(2)} - ${Math.max(...rates).toFixed(2)} ₽`;
+        }
+      });
+    }
+
+    // Fetch and render dashboard metrics
+    async function loadDashboardData() {
+      try {
+        const response = await fetch(`/api/dashboard-data?days=${currentTimeframe}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        dashboardPayload = await response.json();
+        
+        // Update 3 Hero Cards
+        updateHeroCard('usd', dashboardPayload.USD);
+        updateHeroCard('eur', dashboardPayload.EUR);
+        updateHeroCard('aed', dashboardPayload.AED);
+
+        // Update active chart view
+        if (isGridView) {
+          updateGridCharts();
+        } else {
+          updateFocusedChart();
+        }
+
+        // Header Last Synced
+        if (dashboardPayload.last_synced) {
+          const syncDate = new Date(dashboardPayload.last_synced);
+          document.getElementById('badge-last-synced').textContent = syncDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        } else {
+          document.getElementById('badge-last-synced').textContent = 'Just now';
+        }
+
+        // Backfill progress banner check
+        handleBackfillBanner(dashboardPayload.backfill_status);
+
+        // Reload Ledger table
+        loadTableData();
+
+      } catch (err) {
+        console.error('Failed to load dashboard:', err);
+      }
+    }
+
+    // Handle backfill progress display
+    function handleBackfillBanner(status) {
+      const banner = document.getElementById('backfill-banner');
+      if (!status) return;
+
+      if (status.is_running) {
+        banner.classList.remove('hidden');
+        const done = status.completed_days || 0;
+        const total = status.total_days || 30;
+        const pct = Math.round((done / total) * 100);
+
+        document.getElementById('backfill-dates-count').textContent = `${done}/${total} days`;
+        document.getElementById('backfill-percent').textContent = `${pct}%`;
+        document.getElementById('backfill-bar').style.width = `${pct}%`;
+        document.getElementById('backfill-desc').textContent = `Syncing CBR rate for ${status.current_date || '...'}`;
+
+        setTimeout(loadDashboardData, 2000);
+      } else {
+        banner.classList.add('hidden');
+      }
+    }
+
+    // Load data for historical table
+    async function loadTableData() {
+      try {
+        const response = await fetch('/api/history-table?limit=30');
+        if (!response.ok) return;
+        const json = await response.json();
+        cachedTableData = json.records || [];
+
+        const tbody = document.getElementById('table-body');
+        if (cachedTableData.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="5" class="py-5 text-center text-slate-500">No records saved yet.</td></tr>`;
+          return;
+        }
+
+        tbody.innerHTML = cachedTableData.map(row => {
+          const usdVal = row.USD != null ? `${row.USD.toFixed(4)} ₽` : '—';
+          const eurVal = row.EUR != null ? `${row.EUR.toFixed(4)} ₽` : '—';
+          const aedVal = row.AED != null ? `${row.AED.toFixed(4)} ₽` : '—';
+
+          return `
+            <tr class="hover:bg-slate-800/30 transition-colors">
+              <td class="py-2.5 px-5 text-slate-200 font-medium">${row.date}</td>
+              <td class="py-2.5 px-5 text-right text-cyan-300 font-semibold">${usdVal}</td>
+              <td class="py-2.5 px-5 text-right text-indigo-300 font-semibold">${eurVal}</td>
+              <td class="py-2.5 px-5 text-right text-amber-300 font-semibold">${aedVal}</td>
+              <td class="py-2.5 px-5 text-right">
+                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  OFFICIAL
+                </span>
+              </td>
+            </tr>
+          `;
+        }).join('');
+
+      } catch (err) {
+        console.warn('Could not load history table:', err);
+      }
+    }
+
+    // Toggle Collapsible Historical Ledger Table
+    function toggleLedgerTable() {
+      isLedgerOpen = !isLedgerOpen;
+      const container = document.getElementById('ledger-table-container');
+      const chevron = document.getElementById('ledger-chevron');
+
+      if (isLedgerOpen) {
+        container.classList.remove('hidden');
+        chevron.classList.remove('-rotate-90');
+      } else {
+        container.classList.add('hidden');
+        chevron.classList.add('-rotate-90');
+      }
+    }
+
+    // Timeframe selector handler
+    function setTimeframe(tf) {
+      currentTimeframe = tf;
+      
+      ['7', '30', 'all'].forEach(key => {
+        const btn = document.getElementById(`tf-btn-${key}`);
+        if (key === tf) {
+          btn.className = 'timeframe-btn px-2.5 py-1 font-semibold rounded-md bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 transition-all';
+        } else {
+          btn.className = 'timeframe-btn px-2.5 py-1 font-medium rounded-md text-slate-400 hover:text-white transition-all';
+        }
+      });
+
+      loadDashboardData();
+    }
+
+    // Manual Sync Button action
+    async function syncRatesNow() {
+      if (isSyncing) return;
+      isSyncing = true;
+
+      const btn = document.getElementById('btn-sync-now');
+      const icon = document.getElementById('sync-icon');
+      const text = document.getElementById('sync-text');
+
+      btn.disabled = true;
+      icon.classList.add('animate-spin');
+      text.textContent = 'Syncing...';
+
+      try {
+        const response = await fetch('/api/fetch-now', { method: 'POST' });
+        if (!response.ok) {
+          const errorJson = await response.json();
+          throw new Error(errorJson.detail || 'Sync request failed');
+        }
+
+        showToast('Rates successfully synced with Bank of Russia');
+        await loadDashboardData();
+
+      } catch (err) {
+        console.error('Sync failed:', err);
+        showToast('Sync error: ' + err.message, true);
+      } finally {
+        isSyncing = false;
+        btn.disabled = false;
+        icon.classList.remove('animate-spin');
+        text.textContent = 'Sync Now';
+      }
+    }
+
+    // CSV Export Utility
+    function downloadCSV() {
+      if (!cachedTableData || cachedTableData.length === 0) {
+        showToast('No ledger data to export', true);
+        return;
+      }
+
+      let csv = 'Date,USD_RUB,EUR_RUB,AED_RUB\n';
+      cachedTableData.forEach(r => {
+        csv += `${r.date},${r.USD || ''},${r.EUR || ''},${r.AED || ''}\n`;
+      });
+
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', `cbr_rates_${new Date().toISOString().slice(0, 10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      showToast('CSV downloaded');
+    }
+
+    // On Document Ready
+    document.addEventListener('DOMContentLoaded', () => {
+      initCharts();
+      selectCurrency('USD');
+      loadDashboardData();
+
+      // Background periodic check every 60 seconds
+      setInterval(loadDashboardData, 60000);
+    });
+  </script>
+
+</body>
+</html>
